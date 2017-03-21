@@ -1,0 +1,2 @@
+# settings file for networking_baremetal
+enable_service networking_baremetal
