@@ -6,14 +6,13 @@
 Welcome to networking-baremetal's documentation!
 ================================================
 
-.. include:: ./readme.rst
+.. include:: ../../README.rst
 
 .. toctree::
    :maxdepth: 2
 
-   installation
-   usage
-   contributing
+   install/index
+   contributor/index
 
 Indices and tables
 ==================
@@ -21,4 +20,3 @@ Indices and tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
-

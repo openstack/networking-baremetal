@@ -49,7 +49,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         of the current transaction.
 
         :param context: NetworkContext instance describing the new
-        network.
+            network.
         """
         pass
 
@@ -62,7 +62,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         cause the deletion of the resource.
 
         :param context: NetworkContext instance describing the new
-        network.
+            network.
         """
         pass
 
@@ -78,8 +78,8 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         state or state changes that it does not know or care about.
 
         :param context: NetworkContext instance describing the new
-        state of the network, as well as the original state prior
-        to the update_network call.
+            state of the network, as well as the original state prior
+            to the update_network call.
         """
         pass
 
@@ -95,8 +95,8 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         state or state changes that it does not know or care about.
 
         :param context: NetworkContext instance describing the new
-        state of the network, as well as the original state prior
-        to the update_network call.
+            state of the network, as well as the original state prior
+            to the update_network call.
         """
         pass
 
@@ -110,7 +110,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         transaction.
 
         :param context: NetworkContext instance describing the current
-        state of the network, prior to the call to delete it.
+            state of the network, prior to the call to delete it.
         """
         pass
 
@@ -124,7 +124,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         deleted.
 
         :param context: NetworkContext instance describing the current
-        state of the network, prior to the call to delete it.
+            state of the network, prior to the call to delete it.
         """
         pass
 
@@ -137,7 +137,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         of the current transaction.
 
         :param context: SubnetContext instance describing the new
-        subnet.
+            subnet.
         """
         pass
 
@@ -150,7 +150,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         cause the deletion of the resource.
 
         :param context: SubnetContext instance describing the new
-        subnet.
+            subnet.
         """
         pass
 
@@ -166,8 +166,8 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         state or state changes that it does not know or care about.
 
         :param context: SubnetContext instance describing the new
-        state of the subnet, as well as the original state prior
-        to the update_subnet call.
+            state of the subnet, as well as the original state prior
+            to the update_subnet call.
         """
         pass
 
@@ -183,8 +183,8 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         state or state changes that it does not know or care about.
 
         :param context: SubnetContext instance describing the new
-        state of the subnet, as well as the original state prior
-        to the update_subnet call.
+            state of the subnet, as well as the original state prior
+            to the update_subnet call.
         """
         pass
 
@@ -198,7 +198,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         transaction.
 
         :param context: SubnetContext instance describing the current
-        state of the subnet, prior to the call to delete it.
+            state of the subnet, prior to the call to delete it.
         """
         pass
 
@@ -212,7 +212,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         deleted.
 
         :param context: SubnetContext instance describing the current
-        state of the subnet, prior to the call to delete it.
+            state of the subnet, prior to the call to delete it.
         """
         pass
 
@@ -251,8 +251,8 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         state changes that it does not know or care about.
 
         :param context: PortContext instance describing the new
-        state of the port, as well as the original state prior
-        to the update_port call.
+            state of the port, as well as the original state prior
+            to the update_port call.
         """
         pass
 
@@ -268,8 +268,8 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         state changes that it does not know or care about.
 
         :param context: PortContext instance describing the new
-        state of the port, as well as the original state prior
-        to the update_port call.
+            state of the port, as well as the original state prior
+            to the update_port call.
         """
         port = context.current
         if (port[portbindings.VNIC_TYPE] in self.supported_vnic_types and
@@ -286,7 +286,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         rollback of the transaction.
 
         :param context: PortContext instance describing the current
-        state of the port, prior to the call to delete it.
+            state of the port, prior to the call to delete it.
         """
         pass
 
@@ -301,7 +301,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         deleted.
 
         :param context: PortContext instance describing the current
-        state of the port, prior to the call to delete it.
+            state of the port, prior to the call to delete it.
         """
         pass
 

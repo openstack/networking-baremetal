@@ -1,14 +1,12 @@
-===========================
-Networking Baremetal Plugin
-===========================
+networking-baremetal plugin
+---------------------------
 
-Neutron plugin that provides deep Ironic/Neutron integration.
-
-Please fill here a long description which must be at least 3 lines wrapped on
-80 cols, so that distribution package maintainers can use it in their packages.
-Note that this is a hard requirement.
+This project's goal is to provide deep integration between the Networking
+service and the Bare Metal service and advanced networking features like
+notifications of port status changes and routed networks support in clouds
+with Bare Metal service.
 
 * Free software: Apache license
-* Documentation: http://docs.openstack.org/developer/networking-baremetal
+* Documentation: http://docs.openstack.org/networking-baremetal/latest
 * Source: http://git.openstack.org/cgit/openstack/networking-baremetal
 * Bugs: http://bugs.launchpad.net/networking-baremetal
