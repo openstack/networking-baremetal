@@ -1,0 +1,10 @@
+---
+features:
+  - Add neutron agent ``ironic-neutron-agent`` to enable integration with
+    neutron routed provider networks. The ml2 agent reports the state of
+    ironic ports associated with ironic nodes to neutron, it populates the
+    bridge_mappings configuration for each ironic node. The agent data can be
+    used by the neutron segments plug-in in conjunction with neutron ml2
+    mechanism driver to ensure that port binding and ipam ip address
+    allocations are taken from subnets associated with physical network
+    segments available to the ironic port.
