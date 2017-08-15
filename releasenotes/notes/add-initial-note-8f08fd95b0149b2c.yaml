@@ -1,0 +1,7 @@
+---
+prelude: >
+    This is the initial release of the networking-baremetal. The project
+    includes the ``baremetal`` ml2 mechanism driver performing binding of
+    the Networking service ports with ``binding_vnic_type=baremetal`` in
+    flat networks. It also includes the devstack plugin to simplify the
+    development setup and testing.
