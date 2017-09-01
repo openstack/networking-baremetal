@@ -19,7 +19,7 @@ install the ``networking-baremetal`` plugin to the same virtualenv:
 
 .. code-block:: shell
 
-    $ source <path-to-neutron-venv>/bin/activate
+    $ . <path-to-neutron-venv>/bin/activate
     $ pip install networking-baremetal
 
 Enable baremetal mechanism driver in the Networking service
