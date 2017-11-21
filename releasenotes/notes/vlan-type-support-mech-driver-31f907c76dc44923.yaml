@@ -1,0 +1,16 @@
+---
+features:
+  - |
+    Add support for type ``vlan`` networks in baremetal ml2 mechanism driver.
+    This enables binding on networks using vlans for segmentation. It is only
+    setting type ``vlan`` as supported. The intent is to use this in
+    combination with another neutron mechanism driver that actually knows how
+    to configure the network devices.
+
+    .. Note:: The driver will **not** do anything to **set up** the correct
+              **vlan tagging** in the network infrastructure such as switches
+              or baremetal node ports.
+
+              Another ml2 mechanism driver, or some other implementation, must
+              be enabled to perform the necessary configuration on network
+              devices.

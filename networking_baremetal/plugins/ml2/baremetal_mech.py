@@ -43,7 +43,7 @@ class BaremetalMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
         For example: return ('flat', ...). You can also refer to the
         configuration the given agent exposes.
         """
-        return [n_const.TYPE_FLAT]
+        return [n_const.TYPE_FLAT, n_const.TYPE_VLAN]
 
     def get_mappings(self, agent):
         """Return the agent's bridge or interface mappings.

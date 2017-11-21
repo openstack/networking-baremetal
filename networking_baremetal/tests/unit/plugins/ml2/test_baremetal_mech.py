@@ -77,7 +77,8 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
         agent_mock = mock.Mock()
         allowed_network_types = self.driver.get_allowed_network_types(
             agent_mock)
-        self.assertEqual(allowed_network_types, [n_const.TYPE_FLAT])
+        self.assertEqual(allowed_network_types,
+                         [n_const.TYPE_FLAT, n_const.TYPE_VLAN])
 
     @mock.patch.object(provisioning_blocks, 'provisioning_complete')
     def test_update_port_postcommit_not_bound(self, mpb_pc):
