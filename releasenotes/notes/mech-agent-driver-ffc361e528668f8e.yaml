@@ -1,0 +1,6 @@
+---
+features:
+  - Baremetal ml2 mechanism driver integration with the L2
+    agent. This enables the ml2 mechanism driver to use
+    the agent_db data when binding ports. E.g the bridge
+    mappings to enable binding on routed provider networks.

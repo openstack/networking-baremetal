@@ -14,31 +14,43 @@
 
 
 from neutron.db import provisioning_blocks
+from neutron.plugins.ml2.drivers import mech_agent
 from neutron_lib.api.definitions import portbindings
 from neutron_lib.callbacks import resources
 from neutron_lib import constants as n_const
 from neutron_lib.plugins.ml2 import api
 from oslo_log import log as logging
 
+from networking_baremetal import constants
+
 LOG = logging.getLogger(__name__)
 
 BAREMETAL_DRV_ENTITY = 'BAREMETAL_DRV_ENTITIY'
 
 
-class BaremetalMechanismDriver(api.MechanismDriver):
+class BaremetalMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
 
-    def initialize(self):
-        """Perform driver initialization.
+    def __init__(self):
+        super(BaremetalMechanismDriver, self).__init__(
+            constants.BAREMETAL_AGENT_TYPE,
+            portbindings.VIF_TYPE_OTHER,
+            {},
+            supported_vnic_types=[portbindings.VNIC_BAREMETAL])
 
-        Called after all drivers have been loaded and the database has
-        been initialized. No abstract methods defined below will be
-        called prior to this method being called.
+    def get_allowed_network_types(self, agent):
+        """Return the agent's or driver's allowed network types.
 
+        For example: return ('flat', ...). You can also refer to the
+        configuration the given agent exposes.
         """
-        self.supported_vnic_types = [portbindings.VNIC_BAREMETAL]
-        self.supported_network_types = [n_const.TYPE_FLAT]
-        self.vif_type = portbindings.VIF_TYPE_OTHER
-        self.vif_details = {}
+        return [n_const.TYPE_FLAT]
+
+    def get_mappings(self, agent):
+        """Return the agent's bridge or interface mappings.
+
+        For example: agent['configurations'].get('bridge_mappings', {}).
+        """
+        return agent['configurations'].get('bridge_mappings', {})
 
     def create_network_precommit(self, context):
         """Allocate resources for a new network.
@@ -305,66 +317,39 @@ class BaremetalMechanismDriver(api.MechanismDriver):
         """
         pass
 
-    def bind_port(self, context):
-        """Attempt to bind a port.
-
-        This method is called outside any transaction to attempt to
-        establish a port binding using this mechanism driver. Bindings
-        may be created at each of multiple levels of a hierarchical
-        network, and are established from the top level downward. At
-        each level, the mechanism driver determines whether it can
-        bind to any of the network segments in the
-        context.segments_to_bind property, based on the value of the
-        context.host property, any relevant port or network
-        attributes, and its own knowledge of the network topology. At
-        the top level, context.segments_to_bind contains the static
-        segments of the port's network. At each lower level of
-        binding, it contains static or dynamic segments supplied by
-        the driver that bound at the level above. If the driver is
-        able to complete the binding of the port to any segment in
-        context.segments_to_bind, it must call context.set_binding
-        with the binding details. If it can partially bind the port,
-        it must call context.continue_binding with the network
-        segments to be used to bind at the next lower level.
-        If the binding results are committed after bind_port returns,
-        they will be seen by all mechanism drivers as
-        update_port_precommit and update_port_postcommit calls. But if
-        some other thread or process concurrently binds or updates the
-        port, these binding results will not be committed, and
-        update_port_precommit and update_port_postcommit will not be
-        called on the mechanism drivers with these results. Because
-        binding results can be discarded rather than committed,
-        drivers should avoid making persistent state changes in
-        bind_port, or else must ensure that such state changes are
-        eventually cleaned up.
-        Implementing this method explicitly declares the mechanism
-        driver as having the intention to bind ports. This is inspected
-        by the QoS service to identify the available QoS rules you
-        can use with ports.
+    def try_to_bind_segment_for_agent(self, context, segment, agent):
+        """Try to bind with segment for agent.
 
         :param context: PortContext instance describing the port
-        """
-        port = context.current
-        LOG.debug("Binding port: %s" % port['id'])
-        for segment in context.segments_to_bind:
-            if segment[api.NETWORK_TYPE] not in self.supported_network_types:
-                continue
+        :param segment: segment dictionary describing segment to bind
+        :param agent: agents_db entry describing agent to bind
+        :returns: True iff segment has been bound for agent
 
-            vnic_type = port[portbindings.VNIC_TYPE]
-            if vnic_type not in self.supported_vnic_types:
-                continue
-            # NOTE(vsaienko): Set baremetal port as bound if network
-            # is flat to allow Neutron to move it to ACTIVE state.
-            # In flat network ports are pre-plugged to specific network by
-            # administrator as we do not pass any connection information
-            # from Ironic to Neutron
-            if segment[api.NETWORK_TYPE] == n_const.TYPE_FLAT:
-                provisioning_blocks.add_provisioning_component(
-                    context._plugin_context, port['id'], resources.PORT,
-                    BAREMETAL_DRV_ENTITY)
-                context.set_binding(segment[api.ID],
-                                    self.vif_type,
-                                    self.vif_details)
-                LOG.info("Successfully bound port %(port_id)s in segment "
-                         "%(segment_id)s", {'port_id': port['id'],
-                                            'segment_id': segment['id']})
+        Neutron segments api-ref:
+          https://developer.openstack.org/api-ref/network/v2/#segments
+
+        Example segment dictionary: {'segmentation_id': 'segmentation_id',
+                                     'network_type': 'network_type',
+                                     'id': 'segment_uuid'}
+
+        Called outside any transaction during bind_port() so that
+        derived MechanismDrivers can use agent_db data along with
+        built-in knowledge of the corresponding agent's capabilities
+        to attempt to bind to the specified network segment for the
+        agent.
+
+        If the segment can be bound for the agent, this function must
+        call context.set_binding() with appropriate values and then
+        return True. Otherwise, it must return False.
+        """
+        if self.check_segment_for_agent(segment, agent):
+            port = context.current
+            provisioning_blocks.add_provisioning_component(
+                context._plugin_context, port['id'], resources.PORT,
+                BAREMETAL_DRV_ENTITY)
+            context.set_binding(segment[api.ID],
+                                self.get_vif_type(context, agent, segment),
+                                self.get_vif_details(context, agent, segment))
+            return True
+        else:
+            return False

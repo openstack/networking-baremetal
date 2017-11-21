@@ -12,8 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import sys
+
+
+# NOTE(amotoki): In case of oslo_config.sphinxext is enabled,
+# when resolving automodule neutron.tests.functional.db.test_migrations,
+# sphinx accesses tests/functional/__init__.py is processed,
+# eventlet.monkey_patch() is called and monkey_patch() tries to access
+# pyroute2.common.__class__ attribute. It raises pyroute2 warning and
+# it causes sphinx build failure due to warning-is-error = 1.
+# To pass sphinx build, ignore pyroute2 warning explicitly.
+logging.getLogger('pyroute2').setLevel(logging.ERROR)
 
 sys.path.insert(0, os.path.abspath('../..'))
 # -- General configuration ----------------------------------------------------
