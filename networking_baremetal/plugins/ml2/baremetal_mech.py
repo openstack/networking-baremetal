@@ -14,9 +14,9 @@
 
 
 from neutron.db import provisioning_blocks
-from neutron.plugins.common import constants as p_const
 from neutron_lib.api.definitions import portbindings
 from neutron_lib.callbacks import resources
+from neutron_lib import constants as n_const
 from neutron_lib.plugins.ml2 import api
 from oslo_log import log as logging
 
@@ -36,7 +36,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
 
         """
         self.supported_vnic_types = [portbindings.VNIC_BAREMETAL]
-        self.supported_network_types = [p_const.TYPE_FLAT]
+        self.supported_network_types = [n_const.TYPE_FLAT]
         self.vif_type = portbindings.VIF_TYPE_OTHER
         self.vif_details = {}
 
@@ -358,7 +358,7 @@ class BaremetalMechanismDriver(api.MechanismDriver):
             # In flat network ports are pre-plugged to specific network by
             # administrator as we do not pass any connection information
             # from Ironic to Neutron
-            if segment[api.NETWORK_TYPE] == p_const.TYPE_FLAT:
+            if segment[api.NETWORK_TYPE] == n_const.TYPE_FLAT:
                 provisioning_blocks.add_provisioning_component(
                     context._plugin_context, port['id'], resources.PORT,
                     BAREMETAL_DRV_ENTITY)
