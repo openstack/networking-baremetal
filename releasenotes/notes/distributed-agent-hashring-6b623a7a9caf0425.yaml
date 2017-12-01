@@ -1,0 +1,8 @@
+---
+features:
+  - |
+    Adds support for load distribution when multiple instances of the
+    networking-baremetal agent are running. Each instance will manage a subset
+    of bare metal nodes. In case one or more instances of networking-baremetal
+    agent is lost, the remaining instances will take over the bare metal nodes
+    previously managed by the the lost instance(s).

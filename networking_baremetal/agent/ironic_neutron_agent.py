@@ -13,6 +13,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import eventlet
+# oslo_messaging/notify/listener.py documents that monkeypatching is required
+eventlet.monkey_patch()
+
+import socket
 import sys
 
 from ironicclient import client
@@ -26,7 +31,11 @@ from neutron_lib import constants as n_const
 from neutron_lib import context
 from oslo_config import cfg
 from oslo_log import log as logging
+import oslo_messaging
 from oslo_service import loopingcall
+from oslo_utils import timeutils
+from oslo_utils import uuidutils
+from tooz import hashring
 
 from networking_baremetal import constants
 
@@ -98,19 +107,104 @@ def get_client(api_version=DEFAULT_IRONIC_API_VERSION):
     return client.Client(1, **args)
 
 
+def _set_up_notifier(transport, uuid):
+    return oslo_messaging.Notifier(
+        transport,
+        publisher_id='ironic-neutron-agent-' + uuid,
+        driver='messagingv2',
+        topics=['ironic-neutron-agent-heartbeat'])
+
+
+def _set_up_listener(transport, agent_id):
+    targets = [oslo_messaging.Target(topic='ironic-neutron-agent-heartbeat')]
+    endpoints = [HashRingMemberManagerNotificationEndpoint()]
+    return oslo_messaging.get_notification_listener(
+        transport, targets, endpoints, executor='eventlet', pool=agent_id)
+
+
+class HashRingMemberManagerNotificationEndpoint(object):
+    """Class variables members and hashring is shared by all instances"""
+
+    filter_rule = oslo_messaging.NotificationFilter(
+        publisher_id='^ironic-neutron-agent.*')
+
+    members = []
+    hashring = hashring.HashRing([])
+
+    def info(self, ctxt, publisher_id, event_type, payload, metadata):
+
+        timestamp = timeutils.utcnow_ts()
+        # Add members or update timestamp for existing members
+        if not payload['id'] in [x['id'] for x in self.members]:
+            try:
+                LOG.info('Adding member id %s on host %s to hashring.',
+                         payload['id'], payload['host'])
+                self.hashring.add_node(payload['id'])
+                self.members.append(payload)
+            except Exception:
+                LOG.exception(
+                    'Failed to add member %s to hash ring!' % payload['id'])
+        else:
+            for member in self.members:
+                if payload['id'] == member['id']:
+                    member['timestamp'] = payload['timestamp']
+
+        # Remove members that have not checked in for a while
+        for member in self.members:
+            if (timestamp - member['timestamp']) > (
+                    CONF.AGENT.report_interval * 3):
+                try:
+                    LOG.info('Removing member %s on host %s from hashring.',
+                             member['id'], member['host'])
+                    self.hashring.remove_node(member['id'])
+                    self.members.remove(member)
+                except Exception:
+                    LOG.exception('Failed to remove member %s from hash ring!'
+                                  % member['id'])
+
+        return oslo_messaging.NotificationResult.HANDLED
+
+
 class BaremetalNeutronAgent(object):
 
     def __init__(self):
         self.context = context.get_admin_context_without_session()
+        self.agent_id = uuidutils.generate_uuid(dashed=True)
+        self.agent_host = socket.gethostname()
+
+        # Set up oslo_messaging notifier and listener to keep track of other
+        # members
+        self.transport = oslo_messaging.get_notification_transport(CONF)
+        self.notifier = _set_up_notifier(self.transport, self.agent_id)
+        self.listener = _set_up_listener(self.transport, self.agent_id)
+        self.listener.start()
+
+        self.member_manager = HashRingMemberManagerNotificationEndpoint()
+
         self.state_rpc = agent_rpc.PluginReportStateAPI(topics.REPORTS)
         self.ironic_client = get_client()
         self.reported_nodes = {}
         LOG.info('Agent networking-baremetal initialized.')
 
     def start_looping_calls(self):
+        self.notify_agents = loopingcall.FixedIntervalLoopingCall(
+            self._notify_peer_agents)
+        self.notify_agents.start(interval=(CONF.AGENT.report_interval / 3))
         self.heartbeat = loopingcall.FixedIntervalLoopingCall(
             self._report_state)
-        self.heartbeat.start(interval=CONF.AGENT.report_interval)
+        self.heartbeat.start(interval=CONF.AGENT.report_interval,
+                             initial_delay=CONF.AGENT.report_interval)
+
+    def _notify_peer_agents(self):
+        try:
+            self.notifier.info({
+                'ironic-neutron-agent': 'heartbeat'},
+                'ironic-neutron-agent-hearbeat',
+                {'id': self.agent_id,
+                 'host': self.agent_host,
+                 'timestamp': timeutils.utcnow_ts()})
+        except Exception:
+            LOG.exception('Failed to send hash ring membership hearbeat!')
 
     def get_template_node_state(self, node_uuid):
         return {
@@ -151,6 +245,9 @@ class BaremetalNeutronAgent(object):
             return
         for port in ironic_ports:
             node = port.node_uuid
+            if (self.agent_id not in
+                    self.member_manager.hashring[node.encode('utf-8')]):
+                continue
             node_states.setdefault(node, self.get_template_node_state(node))
             mapping = node_states[node]["configurations"]["bridge_mappings"]
             if port.physical_network is not None:
@@ -186,6 +283,7 @@ class BaremetalNeutronAgent(object):
     def run(self):
         self.start_looping_calls()
         self.heartbeat.wait()
+        self.notify_agents.wait()
 
 
 def main():
