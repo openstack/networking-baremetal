@@ -37,6 +37,7 @@ networking-baremetal with ironic. Here is an example of local.conf::
 
     # Enable networking-baremetal plugin
     enable_plugin networking-baremetal git://git.openstack.org/openstack/networking-baremetal.git
+    enable_service ir-neutronagt
 
     # Enable ironic plugin
     enable_plugin ironic git://git.openstack.org/openstack/ironic

@@ -1,28 +1,8 @@
 #!/usr/bin/env bash
 # plugin.sh - DevStack plugin.sh dispatch script template
 
-NETWORKING_BAREMETAL_DIR=${NETWORKING_BAREMETAL_DIR:-$DEST/networking-baremetal}
-NETWORKING_BAREMETAL_DATA_DIR=""$DATA_DIR/networking-baremetal""
-
-function install_networking_baremetal {
-    setup_develop $NETWORKING_BAREMETAL_DIR
-}
-
-
-function configure_networking_baremetal {
-    if [[ -z "$Q_ML2_PLUGIN_MECHANISM_DRIVERS" ]]; then
-        Q_ML2_PLUGIN_MECHANISM_DRIVERS='baremetal'
-    else
-        if [[ ! $Q_ML2_PLUGIN_MECHANISM_DRIVERS =~ $(echo '\<baremetal\>') ]]; then
-            Q_ML2_PLUGIN_MECHANISM_DRIVERS+=',baremetal'
-        fi
-    fi
-    populate_ml2_config /$Q_PLUGIN_CONF_FILE ml2 mechanism_drivers=$Q_ML2_PLUGIN_MECHANISM_DRIVERS
-}
-
-function cleanup_networking_baremetal {
-    rm -rf $NETWORKING_BAREMETAL_DATA_DIR
-}
+echo_summary "networking-baremetal devstack plugin.sh called: $1/$2"
+source $DEST/networking-baremetal/devstack/lib/networking-baremetal
 
 # check for service enabled
 if is_service_enabled networking_baremetal; then
@@ -36,10 +16,16 @@ if is_service_enabled networking_baremetal; then
         # Configure after the other layer 1 and 2 services have been configured
         echo_summary "Configuring Networking Baremetal Ml2"
         configure_networking_baremetal
+        echo_summary "Configure Networking Baremetal Neutron Agent"
+        configure_networking_baremetal_neutron_agent
+        echo_summary "Start Netwroking Baremetal Neutron Agent"
+        start_networking_baremetal_neutron_agent
     fi
 
     if [[ "$1" == "unstack" ]]; then
         echo_summary "Cleaning Networking Baremetal Ml2"
         cleanup_networking_baremetal
+        echo_summary "Cleaning Networking Baremtal Neutron Agent"
+        stop_networking_baremetal_neutron_agent
     fi
 fi
