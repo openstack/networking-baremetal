@@ -1,0 +1,25 @@
+- job:
+    name: networking-baremetal-dsvm-multitenant-vlans
+    parent: legacy-dsvm-base
+    irrelevant-files:
+      - ^.*\.rst$
+      - ^doc/.*$
+      - ^setup.cfg$
+      - ^test-requirements.txt$
+      - ^tools/.*$
+      - ^tox.ini$
+    run: playbooks/legacy/networking-baremetal-dsvm-multitenant-vlans/run.yaml
+    post-run: playbooks/legacy/networking-baremetal-dsvm-multitenant-vlans/post.yaml
+    timeout: 5400
+    required-projects:
+      - openstack-infra/devstack-gate
+      - openstack/ironic
+      - openstack/ironic-lib
+      - openstack/ironic-python-agent
+      - openstack/ironic-tempest-plugin
+      - openstack/networking-baremetal
+      - openstack/networking-generic-switch
+      - openstack/pyghmi
+      - openstack/python-ironicclient
+      - openstack/tempest
+      - openstack/virtualbmc
