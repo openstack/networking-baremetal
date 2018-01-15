@@ -25,17 +25,17 @@ from networking_baremetal import constants
 
 
 class FakePort1(object):
-    def __init__(self):
+    def __init__(self, physnet='physnet1'):
         self.uuid = '11111111-2222-3333-4444-555555555555'
         self.node_uuid = '55555555-4444-3333-2222-111111111111'
-        self.physical_network = 'physnet1'
+        self.physical_network = physnet
 
 
 class FakePort2(object):
-    def __init__(self):
+    def __init__(self, physnet='physnet2'):
         self.uuid = '11111111-aaaa-3333-4444-555555555555'
         self.node_uuid = '55555555-4444-3333-aaaa-111111111111'
-        self.physical_network = 'physnet2'
+        self.physical_network = physnet
 
 
 class TestBaremetalNeutronAgent(base.BaseTestCase):
@@ -86,6 +86,76 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                 },
                 'agent_type': constants.BAREMETAL_AGENT_TYPE
             }
+            self.agent._report_state()
+            mock_report_state.assert_called_with(self.agent.context, expected)
+
+    @mock.patch.object(client, 'Client', autospec=False)
+    def test_start_flag_false_on_update_no_config_change(self, mock_client):
+        with mock.patch.object(self.agent.state_rpc, 'report_state',
+                               autospec=True) as mock_report_state:
+            self.agent.ironic_client = mock_client
+            mock_client.port.list.return_value = [FakePort1()]
+
+            expected = {
+                'topic': n_const.L2_AGENT_TOPIC,
+                'start_flag': 'PLACEHOLDER',
+                'binary': constants.BAREMETAL_BINARY,
+                'host': '55555555-4444-3333-2222-111111111111',
+                'configurations': {
+                    'bridge_mappings': {
+                        'physnet1': 'yes'
+                    }
+                },
+                'agent_type': constants.BAREMETAL_AGENT_TYPE
+            }
+
+            # First time report start_flag is True
+            expected.update({'start_flag': True})
+            self.agent._report_state()
+            mock_report_state.assert_called_with(self.agent.context, expected)
+            # Subsequent times report start_flag is False
+            expected.update({'start_flag': False})
+            self.agent._report_state()
+            mock_report_state.assert_called_with(self.agent.context, expected)
+
+    @mock.patch.object(client, 'Client', autospec=False)
+    def test_start_flag_true_on_update_after_config_change(self, mock_client):
+        with mock.patch.object(self.agent.state_rpc, 'report_state',
+                               autospec=True) as mock_report_state:
+            self.agent.ironic_client = mock_client
+            mock_client.port.list.return_value = [FakePort1()]
+
+            expected = {
+                'topic': n_const.L2_AGENT_TOPIC,
+                'start_flag': 'PLACEHOLDER',
+                'binary': constants.BAREMETAL_BINARY,
+                'host': '55555555-4444-3333-2222-111111111111',
+                'configurations': {
+                    'bridge_mappings': {
+                        'physnet1': 'yes'
+                    }
+                },
+                'agent_type': constants.BAREMETAL_AGENT_TYPE
+            }
+
+            # First time report start_flag is True
+            expected.update({'start_flag': True})
+            self.agent._report_state()
+            mock_report_state.assert_called_with(self.agent.context, expected)
+            # Subsequent times report start_flag is False
+            expected.update({'start_flag': False})
+            self.agent._report_state()
+            mock_report_state.assert_called_with(self.agent.context, expected)
+            # After bridge_mapping config change start_flag is True once
+            mock_client.port.list.return_value = [FakePort1(
+                physnet='new_physnet')]
+            expected.update({'configurations': {
+                'bridge_mappings': {'new_physnet': 'yes'}}})
+            expected.update({'start_flag': True})
+            self.agent._report_state()
+            mock_report_state.assert_called_with(self.agent.context, expected)
+            # Subsequent times report start_flag is False
+            expected.update({'start_flag': False})
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
 

@@ -95,6 +95,7 @@ class BaremetalNeutronAgent(object):
         self.context = context.get_admin_context_without_session()
         self.state_rpc = agent_rpc.PluginReportStateAPI(topics.REPORTS)
         self.ironic_client = get_client()
+        self.reported_nodes = {}
 
     def start_looping_calls(self):
         self.heartbeat = loopingcall.FixedIntervalLoopingCall(
@@ -109,7 +110,7 @@ class BaremetalNeutronAgent(object):
             'configurations': {
                 'bridge_mappings': {},
             },
-            'start_flag': True,
+            'start_flag': False,
             'agent_type': constants.BAREMETAL_AGENT_TYPE}
 
     def _get_ironic_ports(self):
@@ -145,6 +146,11 @@ class BaremetalNeutronAgent(object):
                 mapping[port.physical_network] = "yes"
 
         for state in node_states.values():
+            # If the node was not previously reported with current
+            # configuration set the start_flag True.
+            if not state['configurations'] == self.reported_nodes.get(
+                    state['host']):
+                state.update({'start_flag': True})
             try:
                 self.state_rpc.report_state(self.context, state)
             except AttributeError:
@@ -158,6 +164,8 @@ class BaremetalNeutronAgent(object):
                 LOG.exception("Failed reporting state!")
                 # Don't continue reporting the remaining nodes if one failed.
                 return
+            self.reported_nodes.update(
+                {state['host']: state['configurations']})
 
     def run(self):
         self.start_looping_calls()
