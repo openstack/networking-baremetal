@@ -60,6 +60,7 @@ IRONIC_OPTS = [
 ]
 
 CONF.register_opts(IRONIC_OPTS, group=IRONIC_GROUP)
+CONF.import_group('AGENT', 'neutron.plugins.ml2.drivers.agent.config')
 
 
 def get_session(group):
@@ -96,11 +97,12 @@ class BaremetalNeutronAgent(object):
         self.state_rpc = agent_rpc.PluginReportStateAPI(topics.REPORTS)
         self.ironic_client = get_client()
         self.reported_nodes = {}
+        LOG.info('Agent networking-baremetal initialized.')
 
     def start_looping_calls(self):
         self.heartbeat = loopingcall.FixedIntervalLoopingCall(
             self._report_state)
-        self.heartbeat.start(interval=30)
+        self.heartbeat.start(interval=CONF.AGENT.report_interval)
 
     def get_template_node_state(self, node_uuid):
         return {
@@ -151,7 +153,12 @@ class BaremetalNeutronAgent(object):
             if not state['configurations'] == self.reported_nodes.get(
                     state['host']):
                 state.update({'start_flag': True})
+                LOG.info('Reporting state for host agent %s with new '
+                         'configuration: %s',
+                         state['host'], state['configurations'])
             try:
+                LOG.debug('Reporting state for host: %s with configuration: '
+                          '%s', state['host'], state['configurations'])
                 self.state_rpc.report_state(self.context, state)
             except AttributeError:
                 # This means the server does not support report_state
