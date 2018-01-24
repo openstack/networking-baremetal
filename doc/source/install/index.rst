@@ -30,19 +30,20 @@ Enable baremetal mechanism driver in the Networking service
 -----------------------------------------------------------
 
 To enable mechanism drivers in the ML2 plug-in, edit the
-``/etc/neutron/plugins/ml2/ml2_conf.ini`` file on the neutron server.
-For example, this enables the ovs and baremetal mechanism drivers:
+``/etc/neutron/plugins/ml2/ml2_conf.ini`` configuration file. For example, this
+enables the openvswitch and baremetal mechanism drivers:
 
 .. code-block:: ini
 
   [ml2]
-  mechanism_drivers = ovs,baremetal
+  mechanism_drivers = openvswitch,baremetal
 
-Add configuration for the ironic-neutron-agent and start it
------------------------------------------------------------
+Configure ironic-neutron-agent
+------------------------------
 
 To configure the baremetal neutron agent, edit the neutron configuration
-``/etc/neutron/neutron.conf`` file. Add an ``[ironic]`` section. For example:
+``/etc/neutron/plugins/ml2/ironic_neutron_agent.ini`` file. Add an ``[ironic]``
+section. For example:
 
 .. code-block:: ini
 
@@ -56,25 +57,16 @@ To configure the baremetal neutron agent, edit the neutron configuration
   auth_type = password
   region_name = RegionOne
 
-Additionally the ``transport_url`` in the ``[DEFAULT]`` section should be
-set. For example, this would set the rpc transport to use a rabbit service.
 
-.. code-block:: ini
-
-  [DEFAULT]
-  transport_url = rabbit://username:password@<hostname>:5672/
+Start ironic-neutron-agent service
+----------------------------------
 
 To start the agent either run it from the command line like in the example
 below or add it to the init system.
 
 .. code-block:: shell
 
-   $ ironic-neutron-agent
-
-If you want to use a separate config file; instead of the default
-``neutron.conf``; add the ``--config-file`` argument to the command line. For
-example:
-
-.. code-block:: shell
-
-   $ ironic-neutron-agent --config-file /etc/ironic/ironic-neutron-agent.conf
+   $ ironic-neutron-agent \
+       --config-dir /etc/neutron \
+       --config-file /etc/neutron/plugins/ml2/ironic_neutron_agent.ini \
+       --log-file /var/log/neutron/ironic_neutron_agent.log

@@ -34,6 +34,8 @@ sys.path.insert(0, os.path.abspath('../..'))
 extensions = [
     'sphinx.ext.autodoc',
     #'sphinx.ext.intersphinx',
+    'oslo_config.sphinxext',
+    'oslo_config.sphinxconfiggen',
     'openstackdocstheme',
 ]
 
@@ -51,6 +53,12 @@ master_doc = 'index'
 project = u'Networking Baremetal'
 copyright = u'2017, The Networking Baremetal team'
 
+config_generator_config_file = '../../tools/config/networking-baremetal-config-generator.conf'
+sample_config_basename = '_static/ironic_neutron_agent.ini'
+
+# A list of ignored prefixes for module index sorting.
+modindex_common_prefix = ['networking_baremetal.']
+
 # If true, '()' will be appended to :func: etc. cross-reference text.
 add_function_parentheses = True
 
@@ -60,6 +68,9 @@ add_module_names = True
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'sphinx'
+
+# If true, '()' will be appended to :func: etc. cross-reference text.
+add_function_parentheses = True
 
 # -- Options for HTML output --------------------------------------------------
 

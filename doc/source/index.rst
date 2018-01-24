@@ -11,12 +11,37 @@ Welcome to networking-baremetal's documentation!
 .. toctree::
    :maxdepth: 2
 
-   install/index
+Installation Guide
+==================
+
+.. toctree::
+  :maxdepth: 2
+
+  install/index
+
+Configuration Guide
+===================
+
+.. toctree::
+  :maxdepth: 2
+
+  configuration/index
+
+Contributor Guide
+=================
+
+.. toctree::
+   :maxdepth: 3
+
    contributor/index
+
+Release Notes
+=============
+
+`Release Notes <https://docs.openstack.org/releasenotes/networking-baremetal/>`_
 
 Indices and tables
 ==================
 
 * :ref:`genindex`
-* :ref:`modindex`
 * :ref:`search`

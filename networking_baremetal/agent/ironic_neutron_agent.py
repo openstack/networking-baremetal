@@ -21,6 +21,7 @@ from keystoneauth1 import loading
 from neutron.agent import rpc as agent_rpc
 from neutron.common import config as common_config
 from neutron.common import topics
+from neutron.conf.agent import common as agent_config
 from neutron_lib import constants as n_const
 from neutron_lib import context
 from oslo_config import cfg
@@ -61,6 +62,13 @@ IRONIC_OPTS = [
 
 CONF.register_opts(IRONIC_OPTS, group=IRONIC_GROUP)
 CONF.import_group('AGENT', 'neutron.plugins.ml2.drivers.agent.config')
+
+
+def list_opts():
+    return [(IRONIC_GROUP, IRONIC_OPTS +
+             loading.get_session_conf_options() +
+             loading.get_auth_plugin_conf_options('v3password')),
+            ('agent', agent_config.AGENT_STATE_OPTS)]
 
 
 def get_session(group):
