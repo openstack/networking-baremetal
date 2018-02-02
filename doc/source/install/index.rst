@@ -31,7 +31,7 @@ Enable baremetal mechanism driver in the Networking service
 
 To enable mechanism drivers in the ML2 plug-in, edit the
 ``/etc/neutron/plugins/ml2/ml2_conf.ini`` configuration file. For example, this
-enables the openvswitch and baremetal mechanism drivers:
+enables the ``openvswitch`` and ``baremetal`` mechanism drivers:
 
 .. code-block:: ini
 

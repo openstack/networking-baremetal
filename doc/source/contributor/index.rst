@@ -64,7 +64,7 @@ code reviews to an OpenStack project.
    :maxdepth: 2
 
    Deploying networking-baremetal with DevStack <quickstart>
-   Deploying networking-baremetal and multi-tenant networking with DevStack <quicstart-multitenant>
+   Deploying networking-baremetal and multi-tenant networking with DevStack <quickstart-multitenant>
 
 Full networking-baremetal python API reference
 ==============================================
