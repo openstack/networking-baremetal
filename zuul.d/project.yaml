@@ -1,0 +1,7 @@
+- project:
+    check:
+      jobs:
+        - networking-baremetal-dsvm-multitenant-vlans
+    gate:
+      jobs:
+        - networking-baremetal-dsvm-multitenant-vlans
