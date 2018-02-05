@@ -119,6 +119,7 @@ class BaremetalNeutronAgent(object):
             'topic': n_const.L2_AGENT_TOPIC,
             'configurations': {
                 'bridge_mappings': {},
+                'log_agent_heartbeats': CONF.AGENT.log_agent_heartbeats,
             },
             'start_flag': False,
             'agent_type': constants.BAREMETAL_AGENT_TYPE}

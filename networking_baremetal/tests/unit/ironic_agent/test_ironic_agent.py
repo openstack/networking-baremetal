@@ -19,6 +19,7 @@ import ironicclient.common.apiclient.exceptions as ironic_exc
 from neutron.agent import rpc as agent_rpc
 from neutron.tests import base
 from neutron_lib import constants as n_const
+from oslo_config import fixture as config_fixture
 
 from networking_baremetal.agent import ironic_neutron_agent
 from networking_baremetal import constants
@@ -43,6 +44,7 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         super(TestBaremetalNeutronAgent, self).setUp()
         self.context = object()
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        self.conf = self.useFixture(config_fixture.Config())
 
     def test_get_template_node_state(self):
         # Verify agent binary
@@ -82,7 +84,32 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                 'configurations': {
                     'bridge_mappings': {
                         'physnet1': 'yes'
-                    }
+                    },
+                    'log_agent_heartbeats': False,
+                },
+                'agent_type': constants.BAREMETAL_AGENT_TYPE
+            }
+            self.agent._report_state()
+            mock_report_state.assert_called_with(self.agent.context, expected)
+
+    @mock.patch.object(client, 'Client', autospec=False)
+    def test_report_state_with_log_agent_heartbeats(self, mock_client):
+        with mock.patch.object(self.agent.state_rpc, 'report_state',
+                               autospec=True) as mock_report_state:
+            self.conf.config(log_agent_heartbeats=True, group='AGENT')
+            self.agent.ironic_client = mock_client
+            mock_client.port.list.return_value = [FakePort1()]
+
+            expected = {
+                'topic': n_const.L2_AGENT_TOPIC,
+                'start_flag': True,
+                'binary': constants.BAREMETAL_BINARY,
+                'host': '55555555-4444-3333-2222-111111111111',
+                'configurations': {
+                    'bridge_mappings': {
+                        'physnet1': 'yes'
+                    },
+                    'log_agent_heartbeats': True,
                 },
                 'agent_type': constants.BAREMETAL_AGENT_TYPE
             }
@@ -104,7 +131,8 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                 'configurations': {
                     'bridge_mappings': {
                         'physnet1': 'yes'
-                    }
+                    },
+                    'log_agent_heartbeats': False,
                 },
                 'agent_type': constants.BAREMETAL_AGENT_TYPE
             }
@@ -133,7 +161,8 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                 'configurations': {
                     'bridge_mappings': {
                         'physnet1': 'yes'
-                    }
+                    },
+                    'log_agent_heartbeats': False,
                 },
                 'agent_type': constants.BAREMETAL_AGENT_TYPE
             }
@@ -150,7 +179,8 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
             mock_client.port.list.return_value = [FakePort1(
                 physnet='new_physnet')]
             expected.update({'configurations': {
-                'bridge_mappings': {'new_physnet': 'yes'}}})
+                'bridge_mappings': {'new_physnet': 'yes'},
+                'log_agent_heartbeats': False}})
             expected.update({'start_flag': True})
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
@@ -174,7 +204,8 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                 'configurations': {
                     'bridge_mappings': {
                         'physnet1': 'yes'
-                    }
+                    },
+                    'log_agent_heartbeats': False,
                 },
                 'agent_type': constants.BAREMETAL_AGENT_TYPE
             }
@@ -186,7 +217,8 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                 'configurations': {
                     'bridge_mappings': {
                         'physnet2': 'yes'
-                    }
+                    },
+                    'log_agent_heartbeats': False,
                 },
                 'agent_type': constants.BAREMETAL_AGENT_TYPE
             }
