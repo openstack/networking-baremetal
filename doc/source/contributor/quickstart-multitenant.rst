@@ -56,8 +56,7 @@ multi-tenant networking. Here is an example of local.conf::
 
     # Enable segments service_plugin for routed networks
     Q_SERVICE_PLUGIN_CLASSES=neutron.services.l3_router.l3_router_plugin.L3RouterPlugin,segments
-    IRONIC_PROVISIONING_USE_NEUTRON_SEGMENTS=True
-    IRONIC_NETWORK_USE_NEUTRON_SEGMENTS=True
+    IRONIC_USE_NEUTRON_SEGMENTS=True
 
     # Configure ironic from ironic devstack plugin.
     enable_plugin ironic https://git.openstack.org/openstack/ironic
