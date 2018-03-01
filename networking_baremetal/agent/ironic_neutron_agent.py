@@ -25,8 +25,8 @@ import ironicclient.common.apiclient.exceptions as ironic_exc
 from keystoneauth1 import loading
 from neutron.agent import rpc as agent_rpc
 from neutron.common import config as common_config
-from neutron.common import topics
 from neutron.conf.agent import common as agent_config
+from neutron_lib.agent import topics
 from neutron_lib import constants as n_const
 from neutron_lib import context
 from oslo_config import cfg
