@@ -9,4 +9,4 @@ with Bare Metal service.
 * Free software: Apache license
 * Documentation: http://docs.openstack.org/networking-baremetal/latest
 * Source: http://git.openstack.org/cgit/openstack/networking-baremetal
-* Bugs: http://bugs.launchpad.net/networking-baremetal
+* Bugs: https://storyboard.openstack.org/#!/project/955
