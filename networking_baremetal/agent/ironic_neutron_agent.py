@@ -33,6 +33,7 @@ from oslo_config import cfg
 from oslo_log import log as logging
 import oslo_messaging
 from oslo_service import loopingcall
+from oslo_service import service
 from oslo_utils import timeutils
 from oslo_utils import uuidutils
 from tooz import hashring
@@ -165,7 +166,7 @@ class HashRingMemberManagerNotificationEndpoint(object):
         return oslo_messaging.NotificationResult.HANDLED
 
 
-class BaremetalNeutronAgent(object):
+class BaremetalNeutronAgent(service.ServiceBase):
 
     def __init__(self):
         self.context = context.get_admin_context_without_session()
@@ -186,7 +187,8 @@ class BaremetalNeutronAgent(object):
         self.reported_nodes = {}
         LOG.info('Agent networking-baremetal initialized.')
 
-    def start_looping_calls(self):
+    def start(self):
+        LOG.info('Starting agent networking-baremetal.')
         self.notify_agents = loopingcall.FixedIntervalLoopingCall(
             self._notify_peer_agents)
         self.notify_agents.start(interval=(CONF.AGENT.report_interval / 3))
@@ -194,6 +196,19 @@ class BaremetalNeutronAgent(object):
             self._report_state)
         self.heartbeat.start(interval=CONF.AGENT.report_interval,
                              initial_delay=CONF.AGENT.report_interval)
+
+    def stop(self):
+        LOG.info('Stopping agent networking-baremetal.')
+        self.heartbeat.stop()
+        self.notify_agents.stop()
+
+    def reset(self):
+        LOG.info('Resetting agent networking-baremetal.')
+        self.heartbeat.stop()
+        self.notify_agents.stop()
+
+    def wait(self):
+        pass
 
     def _notify_peer_agents(self):
         try:
@@ -280,14 +295,10 @@ class BaremetalNeutronAgent(object):
             self.reported_nodes.update(
                 {state['host']: state['configurations']})
 
-    def run(self):
-        self.start_looping_calls()
-        self.heartbeat.wait()
-        self.notify_agents.wait()
-
 
 def main():
     common_config.init(sys.argv[1:])
     common_config.setup_logging()
     agent = BaremetalNeutronAgent()
-    agent.run()
+    launcher = service.launch(cfg.CONF, agent, restart_method='mutate')
+    launcher.wait()
