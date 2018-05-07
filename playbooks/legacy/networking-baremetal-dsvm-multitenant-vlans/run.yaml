@@ -121,7 +121,7 @@
           export PROJECTS="openstack/networking-baremetal $PROJECTS"
           export PYTHONUNBUFFERED=true
           export DEVSTACK_GATE_TEMPEST=1
-          export DEVSTACK_GATE_TEMPEST_REGEX='ironic'
+          export DEVSTACK_GATE_TEMPEST_REGEX='ironic_tempest_plugin.tests.scenario'
           export DEVSTACK_GATE_NEUTRON=1
           export DEVSTACK_GATE_VIRT_DRIVER=ironic
           export DEVSTACK_GATE_CONFIGDRIVE=1
