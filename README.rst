@@ -10,3 +10,4 @@ with Bare Metal service.
 * Documentation: http://docs.openstack.org/networking-baremetal/latest
 * Source: http://git.openstack.org/cgit/openstack/networking-baremetal
 * Bugs: https://storyboard.openstack.org/#!/project/955
+* Release notes: https://docs.openstack.org/releasenotes/networking-baremetal/
