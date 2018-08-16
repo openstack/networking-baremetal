@@ -1,4 +1,10 @@
 - project:
+    templates:
+      - openstack-python-jobs-neutron
+      - openstack-python35-jobs-neutron
+      - publish-openstack-sphinx-docs
+      - check-requirements
+      - release-notes-jobs
     check:
       jobs:
         - networking-baremetal-dsvm-multitenant-vlans
