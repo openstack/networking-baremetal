@@ -4,6 +4,8 @@
 echo_summary "networking-baremetal devstack plugin.sh called: $1/$2"
 source $DEST/networking-baremetal/devstack/lib/networking-baremetal
 
+enable_python3_package neworking-baremetal
+
 # check for service enabled
 if is_service_enabled networking_baremetal; then
 

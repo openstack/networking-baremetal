@@ -1,2 +1,5 @@
 # settings file for networking_baremetal
+define_plugin networking-baremetal
+plugin_requires networking-baremetal ironic
+plugin_requires networking-baremetal networking-generic-switch
 enable_service networking_baremetal

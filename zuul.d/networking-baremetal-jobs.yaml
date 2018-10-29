@@ -1,0 +1,113 @@
+- job:
+    name: networking-baremetal-multitenant-vlans
+    parent: devstack-tempest
+    irrelevant-files:
+      - ^.*\.rst$
+      - ^doc/.*$
+      - ^setup.cfg$
+      - ^test-requirements.txt$
+      - ^tools/.*$
+      - ^tox.ini$
+    timeout: 5400
+    required-projects:
+      - openstack/ironic
+      - openstack/ironic-python-agent
+      - openstack/ironic-tempest-plugin
+      - openstack/networking-generic-switch
+      - openstack/networking-baremetal
+      - openstack/pyghmi
+      - openstack/virtualbmc
+    vars:
+      devstack_plugins:
+        ironic: git://git.openstack.org/openstack/ironic
+        networking-generic-switch: git://git.openstack.org/openstack/networking-generic-switch
+        networking-baremetal: git://git.openstack.org/openstack/networking-baremetal
+      tox_envlist: all
+      tempest_concurrency: 1
+      tempest_test_regex: ironic_tempest_plugin.tests.scenario
+      devstack_localrc:
+        DEFAULT_INSTANCE_TYPE: baremetal
+        ENABLE_TENANT_VLANS: True
+        IRONIC_BAREMETAL_BASIC_OPS: True
+        IRONIC_BUILD_DEPLOY_RAMDISK: False
+        IRONIC_DEFAULT_DEPLOY_INTERFACE: direct
+        IRONIC_DEPLOY_DRIVER_ISCSI_WITH_IPA: True
+        IRONIC_ENABLED_DRIVERS: fake
+        IRONIC_DEPLOY_DRIVER: ipmi
+        IRONIC_ENABLED_NETWORK_INTERFACES: flat,neutron
+        IRONIC_NETWORK_INTERFACE: neutron
+        IRONIC_PROVISION_NETWORK_NAME: ironic-provision
+        IRONIC_PROVISION_PROVIDER_NETWORK_TYPE: vlan
+        IRONIC_PROVISION_SUBNET_GATEWAY: 10.0.5.1
+        IRONIC_PROVISION_SUBNET_PREFIX: 10.0.5.0/24
+        IRONIC_RAMDISK_TYPE: tinyipa
+        IRONIC_TEMPEST_BUILD_TIMEOUT: 1800
+        IRONIC_TEMPEST_WHOLE_DISK_IMAGE: True
+        IRONIC_USE_LINK_LOCAL: True
+        IRONIC_USE_NEUTRON_SEGMENTS: True
+        IRONIC_VM_COUNT: 3
+        IRONIC_VM_EPHEMERAL_DISK: 0
+        IRONIC_VM_SPECS_RAM: 384
+        IRONIC_CALLBACK_TIMEOUT: 600
+        IRONIC_VM_LOG_DIR: '{{ devstack_base_dir }}/ironic-bm-logs'
+        OVS_PHYSICAL_BRIDGE: brbm
+        PHYSICAL_NETWORK: mynetwork
+        Q_AGENT: openvswitch
+        Q_ML2_TENANT_NETWORK_TYPE: vlan
+        Q_PLUGIN: ml2
+        Q_SERVICE_PLUGIN_CLASSES: neutron.services.l3_router.l3_router_plugin.L3RouterPlugin,segments
+        Q_USE_DEBUG_COMMAND: True
+        Q_USE_PROVIDERNET_FOR_PUBLIC: False
+        SWIFT_ENABLE_TEMPURLS: True
+        SWIFT_TEMPURL_KEY: secretkey
+        TEMPEST_CONCURRENCY: 1
+        TEMPEST_PLUGINS: "'{{ ansible_user_dir }}/src/git.openstack.org/openstack/ironic-tempest-plugin'"
+        TENANT_VLAN_RANGE: 100:150
+        USE_PYTHON3: True
+        VIRT_DRIVER: ironic
+        EBTABLES_RACE_FIX: True
+        BUILD_TIMEOUT: 1800
+      zuul_copy_output:
+        '{{ devstack_base_dir }}/ironic-bm-logs': 'logs'
+      devstack_services:
+        dstat: True
+        etcd3: True
+        g-api: True
+        g-reg: True
+        key: True
+        mysql: True
+        n-api: True
+        n-api-meta: True
+        n-cauth: True
+        n-cond: True
+        n-cpu: True
+        n-novnc: True
+        n-obj: True
+        n-sch: True
+        placement-api: True
+        q-agt: True
+        q-dhcp: True
+        q-l3: True
+        q-meta: True
+        q-svc: True
+        rabbit: True
+        s-account: True
+        s-container: True
+        s-object: True
+        s-proxy: True
+        tempest: True
+        generic_switch: True
+        networking_baremetal: True
+        ir-neutronagt: True
+        cinder: False
+        c-api: False
+        c-bak: False
+        c-sch: False
+        c-vol: False
+
+- job:
+    name: networking-baremetal-multitenant-vlans-python2
+    parent: networking-baremetal-multitenant-vlans
+    vars:
+      devstack_localrc:
+        USE_PYTHON3: False
