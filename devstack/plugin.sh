@@ -16,9 +16,9 @@ if is_service_enabled networking_baremetal; then
         # Configure after the other layer 1 and 2 services have been configured
         echo_summary "Configuring Networking Baremetal Ml2"
         configure_networking_baremetal
-        echo_summary "Configure Networking Baremetal Neutron Agent"
+        echo_summary "Configuring Networking Baremetal Neutron Agent"
         configure_networking_baremetal_neutron_agent
-        echo_summary "Start Netwroking Baremetal Neutron Agent"
+        echo_summary "Starting Networking Baremetal Neutron Agent"
         start_networking_baremetal_neutron_agent
     fi
 
