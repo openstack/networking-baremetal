@@ -97,13 +97,21 @@ multi-tenant networking. Here is an example of local.conf::
     # Create 3 virtual machines to pose as Ironic's baremetal nodes.
     IRONIC_VM_COUNT=3
     IRONIC_BAREMETAL_BASIC_OPS=True
+    DEFAULT_INSTANCE_TYPE=baremetal
 
-    # Enable Ironic drivers.
-    IRONIC_ENABLED_DRIVERS=fake,agent_ipmitool,pxe_ipmitool
+    # Enable additional hardware types, if needed.
+    #IRONIC_ENABLED_HARDWARE_TYPES=ipmi,fake-hardware
+    # Don't forget that many hardware types require enabling of additional
+    # interfaces, most often power and management:
+    #IRONIC_ENABLED_MANAGEMENT_INTERFACES=ipmitool,fake
+    #IRONIC_ENABLED_POWER_INTERFACES=ipmitool,fake
+    # The 'ipmi' hardware type's default deploy interface is 'iscsi'.
+    # This would change the default to 'direct':
+    #IRONIC_DEFAULT_DEPLOY_INTERFACE=direct
 
     # Change this to alter the default driver for nodes created by devstack.
     # This driver should be in the enabled list above.
-    IRONIC_DEPLOY_DRIVER=agent_ipmitool
+    IRONIC_DEPLOY_DRIVER=ipmi
 
     # The parameters below represent the minimum possible values to create
     # functional nodes.
