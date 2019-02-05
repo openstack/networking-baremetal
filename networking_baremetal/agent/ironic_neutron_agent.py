@@ -164,11 +164,19 @@ class BaremetalNeutronAgent(service.ServiceBase):
         LOG.info('Stopping agent networking-baremetal.')
         self.heartbeat.stop()
         self.notify_agents.stop()
+        self.listener.stop()
+        self.pool_listener.stop()
+        self.listener.wait()
+        self.pool_listener.wait()
 
     def reset(self):
         LOG.info('Resetting agent networking-baremetal.')
         self.heartbeat.stop()
         self.notify_agents.stop()
+        self.listener.stop()
+        self.pool_listener.stop()
+        self.listener.wait()
+        self.pool_listener.wait()
 
     def wait(self):
         pass
