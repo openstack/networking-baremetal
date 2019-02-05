@@ -205,7 +205,11 @@ class BaremetalNeutronAgent(object):
         self.transport = oslo_messaging.get_notification_transport(
             CONF, url=_get_notification_transport_url())
         self.notifier = _set_up_notifier(self.transport, self.agent_id)
-        self.listener = _set_up_listener(self.transport, self.agent_id)
+        # Note(hjensas): We need to have listener consuming the non-pool queue.
+        # See bug: https://bugs.launchpad.net/oslo.messaging/+bug/1814544
+        self.listener = _set_up_listener(self.transport, None)
+        self.pool_listener = _set_up_listener(self.transport, '-'.join(
+            ['ironic-neutron-agent-heartbeat-pool', self.agent_id]))
 
         self.member_manager = HashRingMemberManagerNotificationEndpoint()
 
@@ -309,6 +313,7 @@ class BaremetalNeutronAgent(object):
                 {state['host']: state['configurations']})
 
     def run(self):
+        self.pool_listener.start()
         self.listener.start()
         self.start_looping_calls()
         self.heartbeat.wait()
