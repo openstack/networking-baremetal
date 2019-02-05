@@ -17,6 +17,7 @@ import eventlet
 # oslo_messaging/notify/listener.py documents that monkeypatching is required
 eventlet.monkey_patch()
 
+from six.moves.urllib import parse
 import socket
 import sys
 
@@ -108,6 +109,16 @@ def get_client(api_version=DEFAULT_IRONIC_API_VERSION):
     return client.Client(1, **args)
 
 
+def _get_notification_transport_url():
+    url = parse.urlparse(CONF.transport_url)
+    if CONF.oslo_messaging_rabbit.amqp_auto_delete is False:
+        q = parse.parse_qs(url.query)
+        q.update({'amqp_auto_delete': ['true']})
+        query = parse.urlencode({k: v[0] for k, v in q.items()})
+        url = url._replace(query=query)
+    return parse.urlunparse(url)
+
+
 def _set_up_notifier(transport, uuid):
     return oslo_messaging.Notifier(
         transport,
@@ -175,10 +186,16 @@ class BaremetalNeutronAgent(service.ServiceBase):
 
         # Set up oslo_messaging notifier and listener to keep track of other
         # members
-        self.transport = oslo_messaging.get_notification_transport(CONF)
+        # NOTE(hjensas): Override the control_exchange for the notification
+        # transport to allow setting amqp_auto_delete = true.
+        # TODO(hjensas): Remove this and override the exchange when setting up
+        # the notifier once the fix for bug is available.
+        #   https://bugs.launchpad.net/oslo.messaging/+bug/1814797
+        CONF.set_override('control_exchange', 'ironic-neutron-agent')
+        self.transport = oslo_messaging.get_notification_transport(
+            CONF, url=_get_notification_transport_url())
         self.notifier = _set_up_notifier(self.transport, self.agent_id)
         self.listener = _set_up_listener(self.transport, self.agent_id)
-        self.listener.start()
 
         self.member_manager = HashRingMemberManagerNotificationEndpoint()
 
@@ -189,6 +206,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
 
     def start(self):
         LOG.info('Starting agent networking-baremetal.')
+        self.listener.start()
         self.notify_agents = loopingcall.FixedIntervalLoopingCall(
             self._notify_peer_agents)
         self.notify_agents.start(interval=(CONF.AGENT.report_interval / 3))

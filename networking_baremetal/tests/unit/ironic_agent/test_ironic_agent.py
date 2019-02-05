@@ -44,8 +44,9 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
     def setUp(self):
         super(TestBaremetalNeutronAgent, self).setUp()
         self.context = object()
-        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         self.conf = self.useFixture(config_fixture.Config())
+        self.conf.config(transport_url='rabbit://user:password@host/')
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
 
     def test_get_template_node_state(self):
         # Verify agent binary
