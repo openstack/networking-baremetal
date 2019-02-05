@@ -1,0 +1,13 @@
+---
+fixes:
+  - |
+    Fixes an issue causing heavy RAM (and/or-storage) usage on the message
+    broker back-end. The ``ironic-neutron-agent`` uses oslo.messaging
+    notifications, with all notification listeners using pools. Since all
+    listeneres are using pools the default notification queue in messaging is
+    not consumed (only the pool queues are consumed). The default notification
+    queue was continously growing, consuming more and more resources on the
+    messaging back-end. See `oslo.messaging bug: 1814544
+    <https://bugs.launchpad.net/oslo.messaging/+bug/1814544>`_ and `bug:
+    2004938 <https://storyboard.openstack.org/#!/story/2004938>`_ for more
+    details.
