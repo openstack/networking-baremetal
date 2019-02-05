@@ -1,0 +1,40 @@
+---
+upgrade:
+  - |
+    To fix `bug: 2004933 <https://storyboard.openstack.org/#!/story/2004933>`_
+    oslo.messaging notification queues are now created with
+    ``amqp_auto_delete=true``. When upgrading the agent old queues must be
+    deleted prior to starting the ``ironic-neutron-agent`` service again after
+    the update. _(If the old queues were created with
+    ``amqp_auto_delete=false``, the agent will not be able to start when the
+    old queues still exist.)_
+
+    On rabbitmq queues can be deleted via the web console. For example with
+    curl::
+
+      curl -i -u username:password \
+        -H "content-type:application/json" -XDELETE \
+        http://<host>:<web-port>/api/queues/<vhost>/<queue-name>
+
+    Another example with vhost: '/' deleting the
+    ironic-neutron-agent-heartbeat.info queue::
+
+      curl -i -u username:password \
+        -H "content-type:application/json" \
+        -XDELETE \
+        http://172.20.0.1:15672/api/queues/%2F/ironic-neutron-agent-heartbeat.info
+
+    .. Note:: In the example above the vhost is ``/``.
+              To ensure the vhost is correctly encoded the use of ``%2F``,
+              instead of ``/`` is required.
+fixes:
+  - |
+    Fixes an issue where old oslo.messaging notification pool queues remained
+    in the broker without any consumer after agent restart. The notification
+    queues will now be created with ``amqp_auto_delete=true``. See `bug:
+    2004933 <https://storyboard.openstack.org/#!/story/2004933>`_.
+
+    .. Warning:: Old queues must be deleted when updating to a version with
+                 this fix. Please refer to the upgrade section of the
+                 releasenotes for details.
+
