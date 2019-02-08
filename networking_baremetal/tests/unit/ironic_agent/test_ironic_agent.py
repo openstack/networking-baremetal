@@ -13,6 +13,7 @@
 #    under the License.
 
 from unittest import mock
+from urllib import parse as urlparse
 
 from ironicclient import client
 import ironicclient.common.apiclient.exceptions as ironic_exc
@@ -308,3 +309,51 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         self.agent._report_state()
         self.assertEqual(1, mock_log.call_count)
         self.agent.heartbeat.stop.assert_called()
+
+    def test__get_notification_transport_url(self, mock_client):
+        self.assertEqual(
+            'rabbit://user:password@host/?amqp_auto_delete=true',
+            ironic_neutron_agent._get_notification_transport_url())
+
+        self.conf.config(transport_url='rabbit://user:password@host:5672/')
+        self.assertEqual(
+            'rabbit://user:password@host:5672/?amqp_auto_delete=true',
+            ironic_neutron_agent._get_notification_transport_url())
+
+        self.conf.config(transport_url='rabbit://host:5672/')
+        self.assertEqual(
+            'rabbit://host:5672/?amqp_auto_delete=true',
+            ironic_neutron_agent._get_notification_transport_url())
+
+        self.conf.config(transport_url='rabbit://user:password@host/vhost')
+        self.assertEqual(
+            'rabbit://user:password@host/vhost?amqp_auto_delete=true',
+            ironic_neutron_agent._get_notification_transport_url())
+
+        self.conf.config(
+            transport_url='rabbit://user:password@host/vhost?foo=bar')
+        self.assertEqual(
+            # NOTE(hjensas): Parse the url's when comparing, different versions
+            # may sort the query different.
+            urlparse.urlparse('rabbit://user:password@host/'
+                              'vhost?foo=bar&amqp_auto_delete=true'),
+            urlparse.urlparse(
+                ironic_neutron_agent._get_notification_transport_url()))
+
+        self.conf.config(
+            transport_url=('rabbit://user:password@host/vhost?foo=bar&'
+                           'amqp_auto_delete=false'))
+        self.assertEqual(
+            # NOTE(hjensas): Parse the url's when comparing, different versions
+            # may sort the query different.
+            urlparse.urlparse('rabbit://user:password@host'
+                              '/vhost?foo=bar&amqp_auto_delete=true'),
+            urlparse.urlparse(
+                ironic_neutron_agent._get_notification_transport_url()))
+
+    def test__get_notification_transport_url_auto_delete_enabled(
+            self, mock_client):
+        self.conf.config(amqp_auto_delete=True, group='oslo_messaging_rabbit')
+        self.assertEqual(
+            'rabbit://user:password@host/',
+            ironic_neutron_agent._get_notification_transport_url())
