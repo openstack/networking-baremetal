@@ -2,12 +2,12 @@
 upgrade:
   - |
     To fix `bug: 2004933 <https://storyboard.openstack.org/#!/story/2004933>`_
-    oslo.messaging notification queues are now created with
-    ``amqp_auto_delete=true``. When upgrading the agent old queues must be
-    deleted prior to starting the ``ironic-neutron-agent`` service again after
-    the update. _(If the old queues were created with
-    ``amqp_auto_delete=false``, the agent will not be able to start when the
-    old queues still exist.)_
+    oslo.messaging notification queues are now renamed and created with
+    ``amqp_auto_delete=true``. When upgrading the agent old queues should be
+    deleted to free up message broker resources. Previous queue that can be
+    deleted are named ``ironic-neutron-agent-heartbeat.info``. There may
+    also be queues with uuid of previous agent instances as name, these can
+    also safely be deleted. (Look in the agent logs for relevant agent uuids).
 
     On rabbitmq queues can be deleted via the web console. For example with
     curl::
@@ -33,8 +33,4 @@ fixes:
     in the broker without any consumer after agent restart. The notification
     queues will now be created with ``amqp_auto_delete=true``. See `bug:
     2004933 <https://storyboard.openstack.org/#!/story/2004933>`_.
-
-    .. Warning:: Old queues must be deleted when updating to a version with
-                 this fix. Please refer to the upgrade section of the
-                 releasenotes for details.
 
