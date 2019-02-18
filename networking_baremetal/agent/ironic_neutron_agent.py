@@ -134,11 +134,12 @@ def _set_up_notifier(transport, uuid):
         transport,
         publisher_id='ironic-neutron-agent-' + uuid,
         driver='messagingv2',
-        topics=['ironic-neutron-agent-heartbeat'])
+        topics=['ironic-neutron-agent-member-manager'])
 
 
 def _set_up_listener(transport, agent_id):
-    targets = [oslo_messaging.Target(topic='ironic-neutron-agent-heartbeat')]
+    targets = [
+        oslo_messaging.Target(topic='ironic-neutron-agent-member-manager')]
     endpoints = [HashRingMemberManagerNotificationEndpoint()]
     return oslo_messaging.get_notification_listener(
         transport, targets, endpoints, executor='eventlet', pool=agent_id)
@@ -209,7 +210,7 @@ class BaremetalNeutronAgent(object):
         # See bug: https://bugs.launchpad.net/oslo.messaging/+bug/1814544
         self.listener = _set_up_listener(self.transport, None)
         self.pool_listener = _set_up_listener(self.transport, '-'.join(
-            ['ironic-neutron-agent-heartbeat-pool', self.agent_id]))
+            ['ironic-neutron-agent-member-manager-pool', self.agent_id]))
 
         self.member_manager = HashRingMemberManagerNotificationEndpoint()
 
@@ -231,7 +232,7 @@ class BaremetalNeutronAgent(object):
         try:
             self.notifier.info({
                 'ironic-neutron-agent': 'heartbeat'},
-                'ironic-neutron-agent-hearbeat',
+                'ironic-neutron-agent-member-manager',
                 {'id': self.agent_id,
                  'host': self.agent_host,
                  'timestamp': timeutils.utcnow_ts()})
