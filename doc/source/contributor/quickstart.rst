@@ -28,11 +28,11 @@ networking-baremetal with ironic. Here is an example of local.conf::
     SWIFT_TEMPURL_KEY=password
 
     # Enable networking-baremetal plugin
-    enable_plugin networking-baremetal git://git.openstack.org/openstack/networking-baremetal.git
+    enable_plugin networking-baremetal https://git.openstack.org/openstack/networking-baremetal.git
     enable_service ir-neutronagt
 
     # Enable ironic plugin
-    enable_plugin ironic git://git.openstack.org/openstack/ironic
+    enable_plugin ironic https://git.openstack.org/openstack/ironic
     enable_service networking_baremetal
 
     # Enable neutron which is required by ironic and disable nova-network.

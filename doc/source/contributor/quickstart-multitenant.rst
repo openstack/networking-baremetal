@@ -31,7 +31,7 @@ multi-tenant networking. Here is an example of local.conf::
     enable_plugin networking-generic-switch https://git.openstack.org/openstack/networking-generic-switch
 
     # Enable networking-baremetal plugin
-    enable_plugin networking-baremetal git://git.openstack.org/openstack/networking-baremetal.git
+    enable_plugin networking-baremetal https://git.openstack.org/openstack/networking-baremetal.git
     enable_service networking_baremetal
     enable_service ir-neutronagt
 
