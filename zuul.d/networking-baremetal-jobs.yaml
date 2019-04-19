@@ -14,8 +14,8 @@
       - openstack/networking-baremetal
     vars:
       devstack_plugins:
-        networking-generic-switch: https://git.openstack.org/openstack/networking-generic-switch
-        networking-baremetal: https://git.openstack.org/openstack/networking-baremetal
+        networking-generic-switch: https://opendev.org/openstack/networking-generic-switch
+        networking-baremetal: https://opendev.org/openstack/networking-baremetal
       devstack_localrc:
         ENABLE_TENANT_VLANS: True
         FORCE_CONFIG_DRIVE: False
