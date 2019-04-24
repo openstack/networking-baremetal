@@ -48,7 +48,7 @@ Mailing list (prefix Subject line with ``[ironic][networking-baremetal]``)
     http://lists.openstack.org/cgi-bin/mailman/listinfo/openstack-discuss
 
 Code Hosting
-    https://git.openstack.org/cgit/openstack/networking-baremetal
+    https://opendev.org/openstack/networking-baremetal
 
 Code Review
     https://review.openstack.org/#/q/status:open+project:openstack/networking-baremetal,n,z

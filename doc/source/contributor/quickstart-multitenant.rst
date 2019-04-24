@@ -28,10 +28,10 @@ multi-tenant networking. Here is an example of local.conf::
     SWIFT_TEMPURL_KEY=password
 
     # Install networking-generic-switch Neutron ML2 driver that interacts with OVS
-    enable_plugin networking-generic-switch https://git.openstack.org/openstack/networking-generic-switch
+    enable_plugin networking-generic-switch https://opendev.org/openstack/networking-generic-switch
 
     # Enable networking-baremetal plugin
-    enable_plugin networking-baremetal https://git.openstack.org/openstack/networking-baremetal.git
+    enable_plugin networking-baremetal https://opendev.org/openstack/networking-baremetal.git
     enable_service networking_baremetal
     enable_service ir-neutronagt
 
@@ -59,7 +59,7 @@ multi-tenant networking. Here is an example of local.conf::
     IRONIC_USE_NEUTRON_SEGMENTS=True
 
     # Configure ironic from ironic devstack plugin.
-    enable_plugin ironic https://git.openstack.org/openstack/ironic
+    enable_plugin ironic https://opendev.org/openstack/ironic
 
     # Enable Ironic API and Ironic Conductor
     enable_service ironic
