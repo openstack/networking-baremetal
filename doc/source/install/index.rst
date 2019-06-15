@@ -26,6 +26,13 @@ install the ``networking-baremetal`` plugin to the same virtualenv:
     $ . <path-to-neutron-venv>/bin/activate
     $ pip install networking-baremetal
 
+Or, use the package from your distribution.
+For RHEL7/CentOS7:
+
+.. code-block:: shell
+
+    $ yum install python2-networking-baremetal python2-ironic-neutron-agent
+
 Enable baremetal mechanism driver in the Networking service
 -----------------------------------------------------------
 
@@ -70,3 +77,35 @@ below or add it to the init system.
        --config-dir /etc/neutron \
        --config-file /etc/neutron/plugins/ml2/ironic_neutron_agent.ini \
        --log-file /var/log/neutron/ironic_neutron_agent.log
+
+You can create a systemd service file ``/etc/systemd/system/ironic-neutron-agent.service``
+for ``ironic-neutron-agent`` for systemd based distributions.
+For example:
+
+.. code-block:: ini
+
+  [Unit]
+  Description=OpenStack Ironic Neutron Agent
+  After=syslog.target network.target
+
+  [Service]
+  Type=simple
+  User=neutron
+  PermissionsStartOnly=true
+  TimeoutStartSec=0
+  Restart=on-failure
+  ExecStart=/usr/bin/ironic-neutron-agent --config-dir /etc/neutron --config-file /etc/neutron/plugins/ml2/ironic_neutron_agent.ini --log-file /var/log/neutron/ironic-neutron-agent.log
+  PrivateTmp=true
+  KillMode=process
+
+  [Install]
+  WantedBy=multi-user.target
+
+.. Note:: systemd service file may be already available if you are installing from package released by linux distributions.
+
+Enable and start the ``ironic-neutron-agent`` service:
+
+.. code-block:: shell
+
+    $ sudo systemctl enable ironic-neutron-agent.service
+    $ sudo systemctl start ironic-neutron-agent.service
