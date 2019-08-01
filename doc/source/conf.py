@@ -33,7 +33,6 @@ sys.path.insert(0, os.path.abspath('../..'))
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
 extensions = [
     'sphinx.ext.autodoc',
-    #'sphinx.ext.intersphinx',
     'oslo_config.sphinxext',
     'oslo_config.sphinxconfiggen',
     'openstackdocstheme',
@@ -82,9 +81,6 @@ html_theme = 'openstackdocs'
 repository_name = 'openstack/networking-baremetal'
 bug_project = 'networking-baremetal'
 bug_tag = ''
-
-# Must set this variable to include year, month, day, hours, and minutes.
-html_last_updated_fmt = '%Y-%m-%d %H:%M'
 
 # Output file base name for HTML help builder.
 htmlhelp_basename = '%sdoc' % project
