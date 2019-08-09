@@ -8,7 +8,7 @@
       - ^test-requirements.txt$
       - ^tools/.*$
       - ^tox.ini$
-    timeout: 5400
+    timeout: 7200
     required-projects:
       - openstack/networking-generic-switch
       - openstack/networking-baremetal
@@ -31,15 +31,18 @@
         IRONIC_TEMPEST_WHOLE_DISK_IMAGE: True
         IRONIC_USE_LINK_LOCAL: True
         IRONIC_USE_NEUTRON_SEGMENTS: True
-        IRONIC_VM_COUNT: 3
+        IRONIC_VM_COUNT: 4
         IRONIC_VM_EPHEMERAL_DISK: 0
+        IRONIC_AUTOMATED_CLEAN_ENABLED: False
         OVS_PHYSICAL_BRIDGE: brbm
+        Q_USE_PROVIDERNET_FOR_PUBLIC: True
+        PUBLIC_PHYSICAL_NETWORK: public
+        OVS_BRIDGE_MAPPINGS: mynetwork:brbm,public:br-ex
         PHYSICAL_NETWORK: mynetwork
         Q_ML2_TENANT_NETWORK_TYPE: vlan
         Q_PLUGIN: ml2
         Q_SERVICE_PLUGIN_CLASSES: neutron.services.l3_router.l3_router_plugin.L3RouterPlugin,segments
         Q_USE_DEBUG_COMMAND: True
-        Q_USE_PROVIDERNET_FOR_PUBLIC: False
         SWIFT_ENABLE_TEMPURLS: True
         SWIFT_TEMPURL_KEY: secretkey
         TENANT_VLAN_RANGE: 100:150
@@ -54,6 +57,18 @@
         generic_switch: True
         networking_baremetal: True
         ir-neutronagt: True
+        neutron-api: False
+        neutron-agent: False
+        neutron-dhcp: False
+        neutron-l3: False
+        neutron-metadata-agent: False
+        neutron-metering: False
+        q-agt: True
+        q-dhcp: True
+        q-l3: True
+        q-meta: True
+        q-metering: True
+        q-svc: True
 
 
 - job:
