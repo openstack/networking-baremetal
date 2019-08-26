@@ -63,7 +63,6 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
         self.assertEqual([portbindings.VNIC_BAREMETAL],
                          self.driver.supported_vnic_types)
         self.assertEqual(portbindings.VIF_TYPE_OTHER, self.driver.vif_type)
-        self.assertEqual({}, self.driver.vif_details)
 
     @mock.patch.object(provisioning_blocks, 'add_provisioning_component')
     def test_bind_port(self, mpb_pc):

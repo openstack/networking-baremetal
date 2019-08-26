@@ -8,11 +8,13 @@
       - release-notes-jobs-python3
     check:
       jobs:
-        - networking-baremetal-multitenant-vlans
-        - networking-baremetal-multitenant-vlans-python2
+        - networking-baremetal-multitenant-vlans:
+            voting: false
+        - networking-baremetal-multitenant-vlans-python2:
+            voting: false
         - openstack-tox-lower-constraints
     gate:
       jobs:
-        - networking-baremetal-multitenant-vlans
-        - networking-baremetal-multitenant-vlans-python2
+        # - networking-baremetal-multitenant-vlans
+        # - networking-baremetal-multitenant-vlans-python2
         - openstack-tox-lower-constraints
