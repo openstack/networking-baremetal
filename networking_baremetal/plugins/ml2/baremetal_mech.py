@@ -326,7 +326,7 @@ class BaremetalMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
         :returns: True iff segment has been bound for agent
 
         Neutron segments api-ref:
-          https://developer.openstack.org/api-ref/network/v2/#segments
+          https://docs.openstack.org/api-ref/network/v2/#segments
 
         Example segment dictionary: {'segmentation_id': 'segmentation_id',
                                      'network_type': 'network_type',
