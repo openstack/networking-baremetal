@@ -15,33 +15,35 @@
 from unittest import mock
 from urllib import parse as urlparse
 
-from ironicclient import client
-import ironicclient.common.apiclient.exceptions as ironic_exc
 from neutron.agent import rpc as agent_rpc
 from neutron.tests import base
 from neutron_lib import constants as n_const
+from openstack import connection
+from openstack import exceptions as sdk_exc
 from oslo_config import fixture as config_fixture
 from tooz import hashring
 
 from networking_baremetal.agent import ironic_neutron_agent
 from networking_baremetal import constants
+from networking_baremetal import ironic_client
 
 
 class FakePort1(object):
     def __init__(self, physnet='physnet1'):
         self.uuid = '11111111-2222-3333-4444-555555555555'
-        self.node_uuid = '55555555-4444-3333-2222-111111111111'
+        self.node_id = '55555555-4444-3333-2222-111111111111'
         self.physical_network = physnet
 
 
 class FakePort2(object):
     def __init__(self, physnet='physnet2'):
         self.uuid = '11111111-aaaa-3333-4444-555555555555'
-        self.node_uuid = '55555555-4444-3333-aaaa-111111111111'
+        self.node_id = '55555555-4444-3333-aaaa-111111111111'
         self.physical_network = physnet
 
 
-@mock.patch.object(client, 'Client', autospec=False)
+@mock.patch.object(ironic_client, '_get_ironic_session', autospec=True)
+@mock.patch.object(connection.Connection, 'baremetal', autospec=True)
 class TestBaremetalNeutronAgent(base.BaseTestCase):
     def setUp(self):
         super(TestBaremetalNeutronAgent, self).setUp()
@@ -49,7 +51,7 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         self.conf = self.useFixture(config_fixture.Config())
         self.conf.config(transport_url='rabbit://user:password@host/')
 
-    def test_get_template_node_state(self, mock_client):
+    def test_get_template_node_state(self, mock_conn, mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         # Verify agent binary
         expected = constants.BAREMETAL_BINARY
@@ -73,12 +75,12 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                          self.agent.get_template_node_state(
                              'the_node_uuid')['host'])
 
-    def test_report_state_one_node_one_port(self, mock_client):
+    def test_report_state_one_node_one_port(self, mock_conn, mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         with mock.patch.object(self.agent.state_rpc, 'report_state',
                                autospec=True) as mock_report_state:
-            self.agent.ironic_client = mock_client
-            mock_client.port.list.return_value = [FakePort1()]
+            self.agent.ironic_client = mock_conn
+            mock_conn.ports.return_value = iter([FakePort1()])
             self.agent.agent_id = 'agent_id'
             self.agent.member_manager.hashring = hashring.HashRing(
                 [self.agent.agent_id])
@@ -99,13 +101,14 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
 
-    def test_report_state_with_log_agent_heartbeats(self, mock_client):
+    def test_report_state_with_log_agent_heartbeats(self, mock_conn,
+                                                    mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         with mock.patch.object(self.agent.state_rpc, 'report_state',
                                autospec=True) as mock_report_state:
             self.conf.config(log_agent_heartbeats=True, group='AGENT')
-            self.agent.ironic_client = mock_client
-            mock_client.port.list.return_value = [FakePort1()]
+            self.agent.ironic_client = mock_conn
+            mock_conn.ports.return_value = iter([FakePort1()])
             self.agent.agent_id = 'agent_id'
             self.agent.member_manager.hashring = hashring.HashRing(
                 [self.agent.agent_id])
@@ -127,12 +130,13 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
 
-    def test_start_flag_false_on_update_no_config_change(self, mock_client):
+    def test_start_flag_false_on_update_no_config_change(self, mock_conn,
+                                                         mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         with mock.patch.object(self.agent.state_rpc, 'report_state',
                                autospec=True) as mock_report_state:
-            self.agent.ironic_client = mock_client
-            mock_client.port.list.return_value = [FakePort1()]
+            self.agent.ironic_client = mock_conn
+            mock_conn.ports.return_value = iter([FakePort1()])
             self.agent.agent_id = 'agent_id'
             self.agent.member_manager.hashring = hashring.HashRing(
                 [self.agent.agent_id])
@@ -156,16 +160,18 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
             # Subsequent times report start_flag is False
+            mock_conn.ports.return_value = iter([FakePort1()])
             expected.update({'start_flag': False})
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
 
-    def test_start_flag_true_on_update_after_config_change(self, mock_client):
+    def test_start_flag_true_on_update_after_config_change(self, mock_conn,
+                                                           mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         with mock.patch.object(self.agent.state_rpc, 'report_state',
                                autospec=True) as mock_report_state:
-            self.agent.ironic_client = mock_client
-            mock_client.port.list.return_value = [FakePort1()]
+            self.agent.ironic_client = mock_conn
+            mock_conn.ports.return_value = iter([FakePort1()])
             self.agent.agent_id = 'agent_id'
             self.agent.member_manager.hashring = hashring.HashRing(
                 [self.agent.agent_id])
@@ -189,12 +195,13 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
             # Subsequent times report start_flag is False
+            mock_conn.ports.return_value = iter([FakePort1()])
             expected.update({'start_flag': False})
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
             # After bridge_mapping config change start_flag is True once
-            mock_client.port.list.return_value = [FakePort1(
-                physnet='new_physnet')]
+            mock_conn.ports.return_value = iter(
+                [FakePort1(physnet='new_physnet')])
             expected.update({'configurations': {
                 'bridge_mappings': {'new_physnet': 'yes'},
                 'log_agent_heartbeats': False}})
@@ -202,16 +209,18 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
             # Subsequent times report start_flag is False
+            mock_conn.ports.return_value = iter(
+                [FakePort1(physnet='new_physnet')])
             expected.update({'start_flag': False})
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
 
-    def test_report_state_two_nodes_two_ports(self, mock_client):
+    def test_report_state_two_nodes_two_ports(self, mock_conn, mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         with mock.patch.object(self.agent.state_rpc, 'report_state',
                                autospec=True) as mock_report_state:
-            self.agent.ironic_client = mock_client
-            mock_client.port.list.return_value = [FakePort1(), FakePort2()]
+            self.agent.ironic_client = mock_conn
+            mock_conn.ports.return_value = iter([FakePort1(), FakePort2()])
             self.agent.agent_id = 'agent_id'
             self.agent.member_manager.hashring = hashring.HashRing(
                 [self.agent.agent_id])
@@ -249,68 +258,30 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                  mock.call(self.agent.context, expected2)], any_order=True)
 
     @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
-    def test_ironic_port_list_fail(self, mock_log, mock_client):
+    def test_ironic_port_list_fail(self, mock_log, mock_conn, mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
-        self.agent.ironic_client = mock_client
-        mock_client.port.list.side_effect = Exception()
+        self.agent.ironic_client = mock_conn
+        mock_conn.ports.side_effect = sdk_exc.OpenStackCloudException()
         self.agent._report_state()
         self.assertEqual(1, mock_log.call_count)
 
     @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
     @mock.patch.object(agent_rpc, 'PluginReportStateAPI', autospec=True)
     def test_state_rpc_report_state_fail(self, mock_report_state, mock_log,
-                                         mock_client):
+                                         mock_conn, mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         self.agent.agent_id = 'agent_id'
         self.agent.member_manager.hashring = hashring.HashRing(
             [self.agent.agent_id])
 
-        self.agent.ironic_client = mock_client
+        self.agent.ironic_client = mock_conn
         self.agent.state_rpc = mock_report_state
-        mock_client.port.list.return_value = [FakePort1(), FakePort2()]
+        mock_conn.ports.return_value = iter([FakePort1(), FakePort2()])
         mock_report_state.report_state.side_effect = Exception()
         self.agent._report_state()
         self.assertEqual(1, mock_log.call_count)
 
-    @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
-    def test_ironic_exceptions_stop_loopingcall(self, mock_log, mock_client):
-        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
-        self.agent.agent_id = 'agent_id'
-        self.agent.member_manager.hashring = hashring.HashRing(
-            [self.agent.agent_id])
-        self.agent.heartbeat = mock.Mock()
-        self.agent.ironic_client = mock_client
-        for exc in (ironic_exc.AuthSystemNotFound('auth_system'),
-                    ironic_exc.AuthPluginOptionsMissing('opt_names'),
-                    ironic_exc.UnsupportedVersion()):
-
-            mock_client.port.list.side_effect = exc
-            self.agent._report_state()
-            self.assertEqual(1, mock_log.call_count)
-            self.agent.heartbeat.stop.assert_called()
-
-            mock_log.reset_mock()
-            mock_client.reset_mock()
-            self.agent.heartbeat.reset_mock()
-
-    @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
-    @mock.patch.object(agent_rpc, 'PluginReportStateAPI', autospec=True)
-    def test_report_state_attribute_error_stop_looping_call(
-            self, mock_state_rpc, mock_log, mock_client):
-        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
-        self.agent.agent_id = 'agent_id'
-        self.agent.member_manager.hashring = hashring.HashRing(
-            [self.agent.agent_id])
-        self.agent.heartbeat = mock.Mock()
-        self.agent.ironic_client = mock_client
-        self.agent.state_rpc = mock_state_rpc
-        mock_client.port.list.return_value = [FakePort1(), FakePort2()]
-        del mock_state_rpc.report_state
-        self.agent._report_state()
-        self.assertEqual(1, mock_log.call_count)
-        self.agent.heartbeat.stop.assert_called()
-
-    def test__get_notification_transport_url(self, mock_client):
+    def test__get_notification_transport_url(self, mock_conn, mock_ir_client):
         self.assertEqual(
             'rabbit://user:password@host/?amqp_auto_delete=true',
             ironic_neutron_agent._get_notification_transport_url())
@@ -352,7 +323,7 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                 ironic_neutron_agent._get_notification_transport_url()))
 
     def test__get_notification_transport_url_auto_delete_enabled(
-            self, mock_client):
+            self, mock_conn, mock_ir_client):
         self.conf.config(amqp_auto_delete=True, group='oslo_messaging_rabbit')
         self.assertEqual(
             'rabbit://user:password@host/',
