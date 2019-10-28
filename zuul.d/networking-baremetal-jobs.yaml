@@ -46,7 +46,6 @@
         SWIFT_ENABLE_TEMPURLS: True
         SWIFT_TEMPURL_KEY: secretkey
         TENANT_VLAN_RANGE: 100:150
-        USE_PYTHON3: True
         EBTABLES_RACE_FIX: True
         BUILD_TIMEOUT: 1800
       devstack_services:
@@ -70,7 +69,7 @@
         q-metering: True
         q-svc: True
 
-
+# NOTE(iurygregory): Drop it when the time comes
 - job:
     name: networking-baremetal-multitenant-vlans-python2
     parent: networking-baremetal-multitenant-vlans
