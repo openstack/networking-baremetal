@@ -8,10 +8,8 @@
     check:
       jobs:
         - networking-baremetal-multitenant-vlans
-        - networking-baremetal-multitenant-vlans-python2
         - openstack-tox-lower-constraints
     gate:
       jobs:
         - networking-baremetal-multitenant-vlans
-        - networking-baremetal-multitenant-vlans-python2
         - openstack-tox-lower-constraints

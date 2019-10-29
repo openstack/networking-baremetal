@@ -69,10 +69,3 @@
         q-metering: True
         q-svc: True
 
-# NOTE(iurygregory): Drop it when the time comes
-- job:
-    name: networking-baremetal-multitenant-vlans-python2
-    parent: networking-baremetal-multitenant-vlans
-    vars:
-      devstack_localrc:
-        USE_PYTHON3: False
