@@ -51,7 +51,7 @@ Code Hosting
     https://opendev.org/openstack/networking-baremetal
 
 Code Review
-    https://review.openstack.org/#/q/status:open+project:openstack/networking-baremetal,n,z
+    https://review.opendev.org/#/q/status:open+project:openstack/networking-baremetal,n,z
 
 Developer quick-starts
 ======================
