@@ -62,7 +62,7 @@ section. For example:
   username = ironic
   auth_url = http://identity-server.example.com/identity
   auth_type = password
-  region_name = RegionOne
+  os_region = RegionOne
 
 
 Start ironic-neutron-agent service
