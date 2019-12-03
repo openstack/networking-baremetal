@@ -14,10 +14,10 @@
 #    under the License.
 
 import eventlet
+from urllib import parse as urlparse
 # oslo_messaging/notify/listener.py documents that monkeypatching is required
 eventlet.monkey_patch()
 
-from six.moves.urllib import parse
 import socket
 import sys
 
@@ -50,13 +50,13 @@ def list_opts():
 
 
 def _get_notification_transport_url():
-    url = parse.urlparse(CONF.transport_url)
+    url = urlparse.urlparse(CONF.transport_url)
     if CONF.oslo_messaging_rabbit.amqp_auto_delete is False:
-        q = parse.parse_qs(url.query)
+        q = urlparse.parse_qs(url.query)
         q.update({'amqp_auto_delete': ['true']})
-        query = parse.urlencode({k: v[0] for k, v in q.items()})
+        query = urlparse.urlencode({k: v[0] for k, v in q.items()})
         url = url._replace(query=query)
-    return parse.urlunparse(url)
+    return urlparse.urlunparse(url)
 
 
 def _set_up_notifier(transport, uuid):
