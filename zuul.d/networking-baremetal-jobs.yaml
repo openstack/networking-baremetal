@@ -8,7 +8,6 @@
       - ^test-requirements.txt$
       - ^tools/.*$
       - ^tox.ini$
-    timeout: 7200
     required-projects:
       - openstack/networking-generic-switch
       - openstack/networking-baremetal
@@ -17,6 +16,7 @@
         networking-generic-switch: https://opendev.org/openstack/networking-generic-switch
         networking-baremetal: https://opendev.org/openstack/networking-baremetal
       devstack_localrc:
+        IRONIC_RAMDISK_TYPE: tinyipa
         ENABLE_TENANT_VLANS: True
         FORCE_CONFIG_DRIVE: False
         IRONIC_DEFAULT_DEPLOY_INTERFACE: direct
@@ -31,7 +31,7 @@
         IRONIC_TEMPEST_WHOLE_DISK_IMAGE: True
         IRONIC_USE_LINK_LOCAL: True
         IRONIC_USE_NEUTRON_SEGMENTS: True
-        IRONIC_VM_COUNT: 4
+        IRONIC_VM_COUNT: 3
         IRONIC_VM_EPHEMERAL_DISK: 0
         IRONIC_AUTOMATED_CLEAN_ENABLED: False
         OVS_PHYSICAL_BRIDGE: brbm
