@@ -13,7 +13,7 @@
 #    under the License.
 
 import copy
-import mock
+from unittest import mock
 
 from oslo_utils import timeutils
 from oslotest import base

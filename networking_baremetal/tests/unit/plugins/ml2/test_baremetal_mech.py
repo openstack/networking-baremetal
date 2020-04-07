@@ -13,7 +13,7 @@
 #    under the License.
 
 
-import mock
+from unittest import mock
 
 from neutron.db import provisioning_blocks
 from neutron.plugins.ml2 import driver_context
