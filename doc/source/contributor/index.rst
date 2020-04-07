@@ -71,9 +71,9 @@ Full networking-baremetal python API reference
 
 * :ref:`modindex`
 
-.. # api/autoindex is hidden since it's in the modindex link above.
+.. # api/modules is hidden since it's in the modindex link above.
 .. toctree::
    :hidden:
 
-   api/autoindex
+   api/modules
 
