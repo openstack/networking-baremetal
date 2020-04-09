@@ -12,11 +12,12 @@
       - openstack/networking-generic-switch
       - openstack/networking-baremetal
     vars:
+      tempest_test_timeout: 2400
       devstack_plugins:
         networking-generic-switch: https://opendev.org/openstack/networking-generic-switch
         networking-baremetal: https://opendev.org/openstack/networking-baremetal
       devstack_localrc:
-        IRONIC_RAMDISK_TYPE: tinyipa
+        BUILD_TIMEOUT: 2400
         ENABLE_TENANT_VLANS: True
         FORCE_CONFIG_DRIVE: False
         IRONIC_DEFAULT_DEPLOY_INTERFACE: direct
@@ -27,7 +28,7 @@
         IRONIC_PROVISION_PROVIDER_NETWORK_TYPE: vlan
         IRONIC_PROVISION_SUBNET_GATEWAY: 10.0.5.1
         IRONIC_PROVISION_SUBNET_PREFIX: 10.0.5.0/24
-        IRONIC_TEMPEST_BUILD_TIMEOUT: 1800
+        IRONIC_TEMPEST_BUILD_TIMEOUT: 2400
         IRONIC_TEMPEST_WHOLE_DISK_IMAGE: True
         IRONIC_USE_LINK_LOCAL: True
         IRONIC_USE_NEUTRON_SEGMENTS: True
