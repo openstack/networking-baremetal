@@ -47,7 +47,6 @@
         SWIFT_TEMPURL_KEY: secretkey
         TENANT_VLAN_RANGE: 100:150
         EBTABLES_RACE_FIX: True
-        BUILD_TIMEOUT: 1800
       devstack_services:
         s-account: True
         s-container: True
