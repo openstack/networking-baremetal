@@ -13,14 +13,13 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import eventlet
-from urllib import parse as urlparse
-# oslo_messaging/notify/listener.py documents that monkeypatching is required
-eventlet.monkey_patch()
-
 import socket
 import sys
+from urllib import parse as urlparse
 
+import eventlet
+# oslo_messaging/notify/listener.py documents that monkeypatching is required
+eventlet.monkey_patch()
 import ironicclient.common.apiclient.exceptions as ironic_exc
 from neutron.agent import rpc as agent_rpc
 from neutron.common import config as common_config
