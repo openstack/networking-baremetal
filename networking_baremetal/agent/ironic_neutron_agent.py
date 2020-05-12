@@ -94,8 +94,8 @@ class HashRingMemberManagerNotificationEndpoint(object):
                 self.hashring.add_node(payload['id'])
                 self.members.append(payload)
             except Exception:
-                LOG.exception(
-                    'Failed to add member %s to hash ring!' % payload['id'])
+                LOG.exception('Failed to add member %s to hash ring!',
+                              payload['id'])
         else:
             for member in self.members:
                 if payload['id'] == member['id']:
@@ -111,8 +111,8 @@ class HashRingMemberManagerNotificationEndpoint(object):
                     self.hashring.remove_node(member['id'])
                     self.members.remove(member)
                 except Exception:
-                    LOG.exception('Failed to remove member %s from hash ring!'
-                                  % member['id'])
+                    LOG.exception('Failed to remove member %s from hash ring!',
+                                  member['id'])
 
         return oslo_messaging.NotificationResult.HANDLED
 
