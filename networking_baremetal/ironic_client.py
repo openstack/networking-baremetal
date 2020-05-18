@@ -48,9 +48,9 @@ CONF.register_opts(IRONIC_OPTS, group=IRONIC_GROUP)
 
 
 def list_opts():
-    return [(IRONIC_GROUP, IRONIC_OPTS +
-             loading.get_session_conf_options() +
-             loading.get_auth_plugin_conf_options('v3password'))]
+    return [(IRONIC_GROUP, IRONIC_OPTS
+             + loading.get_session_conf_options()
+             + loading.get_auth_plugin_conf_options('v3password'))]
 
 
 def get_session(group):

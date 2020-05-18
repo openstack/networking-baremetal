@@ -64,11 +64,12 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
                          self.driver.supported_vnic_types)
         self.assertEqual(portbindings.VIF_TYPE_OTHER, self.driver.vif_type)
 
-    @mock.patch.object(provisioning_blocks, 'add_provisioning_component')
+    @mock.patch.object(provisioning_blocks, 'add_provisioning_component',
+                       autospec=True)
     def test_bind_port(self, mpb_pc):
         port_context = self._make_port_ctx(self.AGENTS)
         port_context._plugin_context = 'plugin_context'
-        self.assertEqual(port_context._bound_vif_type, None)
+        self.assertIsNone(port_context._bound_vif_type)
         self.driver.bind_port(port_context)
         self.assertEqual(port_context._bound_vif_type, self.driver.vif_type)
 
@@ -79,7 +80,8 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
         self.assertEqual(allowed_network_types,
                          [n_const.TYPE_FLAT, n_const.TYPE_VLAN])
 
-    @mock.patch.object(provisioning_blocks, 'provisioning_complete')
+    @mock.patch.object(provisioning_blocks, 'provisioning_complete',
+                       autospec=True)
     def test_update_port_postcommit_not_bound(self, mpb_pc):
         m_nc = mock.create_autospec(driver_context.NetworkContext)
         m_nc.current = ml2_utils.get_test_network()
@@ -91,7 +93,8 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
         self.driver.update_port_postcommit(m_pc)
         self.assertFalse(mpb_pc.called)
 
-    @mock.patch.object(provisioning_blocks, 'provisioning_complete')
+    @mock.patch.object(provisioning_blocks, 'provisioning_complete',
+                       autospec=True)
     def test_update_port_postcommit_unsupported_vnic_type_not_bound(
             self, mpb_pc):
         m_nc = mock.create_autospec(driver_context.NetworkContext)
@@ -106,7 +109,8 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
         self.driver.update_port_postcommit(m_pc)
         self.assertFalse(mpb_pc.called)
 
-    @mock.patch.object(provisioning_blocks, 'provisioning_complete')
+    @mock.patch.object(provisioning_blocks, 'provisioning_complete',
+                       autospec=True)
     def test_update_port_postcommit_supported_vnic_type_bound(
             self, mpb_pc):
         m_nc = mock.create_autospec(driver_context.NetworkContext)
@@ -124,7 +128,8 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
         mpb_pc.assert_called_once_with('plugin_context', m_pc.current['id'],
                                        'port', 'BAREMETAL_DRV_ENTITIY')
 
-    @mock.patch.object(provisioning_blocks, 'add_provisioning_component')
+    @mock.patch.object(provisioning_blocks, 'add_provisioning_component',
+                       autospec=True)
     def test_bind_port_unsupported_network_type(self, mpb_pc):
         m_nc = mock.create_autospec(driver_context.NetworkContext)
         m_nc.current = ml2_utils.get_test_network(
@@ -142,7 +147,8 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
         self.driver.bind_port(m_pc)
         self.assertFalse(mpb_pc.called)
 
-    @mock.patch.object(provisioning_blocks, 'add_provisioning_component')
+    @mock.patch.object(provisioning_blocks, 'add_provisioning_component',
+                       autospec=True)
     def test_bind_port_unsupported_vnic_type(self, mpb_pc):
         m_nc = mock.create_autospec(driver_context.NetworkContext)
         m_nc.current = ml2_utils.get_test_network(

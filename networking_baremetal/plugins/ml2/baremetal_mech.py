@@ -284,8 +284,8 @@ class BaremetalMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
             to the update_port call.
         """
         port = context.current
-        if (port[portbindings.VNIC_TYPE] in self.supported_vnic_types and
-                port[portbindings.VIF_TYPE] == self.vif_type):
+        if (port[portbindings.VNIC_TYPE] in self.supported_vnic_types
+                and port[portbindings.VIF_TYPE] == self.vif_type):
             provisioning_blocks.provisioning_complete(
                 context._plugin_context, port['id'], resources.PORT,
                 BAREMETAL_DRV_ENTITY)
