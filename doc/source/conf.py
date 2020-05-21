@@ -65,7 +65,7 @@ add_function_parentheses = True
 add_module_names = True
 
 # The name of the Pygments (syntax highlighting) style to use.
-pygments_style = 'sphinx'
+pygments_style = 'native'
 
 # If true, '()' will be appended to :func: etc. cross-reference text.
 add_function_parentheses = True
@@ -77,8 +77,9 @@ add_function_parentheses = True
 html_theme = 'openstackdocs'
 
 # openstackdocstheme options
-repository_name = 'openstack/networking-baremetal'
-use_storyboard = True
+openstackdocs_repo_name = 'openstack/networking-baremetal'
+openstackdocs_pdf_link = True
+openstackdocs_use_storyboard = True
 
 # Output file base name for HTML help builder.
 htmlhelp_basename = 'networking-baremetaldoc'
