@@ -20,13 +20,13 @@ from urllib import parse as urlparse
 import eventlet
 # oslo_messaging/notify/listener.py documents that monkeypatching is required
 eventlet.monkey_patch()
-import ironicclient.common.apiclient.exceptions as ironic_exc
 from neutron.agent import rpc as agent_rpc
 from neutron.common import config as common_config
 from neutron.conf.agent import common as agent_config
 from neutron_lib.agent import topics
 from neutron_lib import constants as n_const
 from neutron_lib import context
+from openstack import exceptions as sdk_exc
 from oslo_config import cfg
 from oslo_log import log as logging
 import oslo_messaging
@@ -207,30 +207,17 @@ class BaremetalNeutronAgent(service.ServiceBase):
     def _get_ironic_ports(self):
         ironic_ports = []
         try:
-            ironic_ports = self.ironic_client.port.list(detail=True)
-        except ironic_exc.UnsupportedVersion:
-            LOG.exception("Failed to get ironic port data! Ironic Client is "
-                          "using unsupported version of the API. State "
-                          "reporting for agent will be disabled.")
-            self.heartbeat.stop()
-        except (ironic_exc.AuthPluginOptionsMissing,
-                ironic_exc.AuthSystemNotFound):
-            LOG.exception("Failed to get ironic port data! Ironic Client "
-                          "autorization failure. State reporting for agent "
-                          "will be disabled.")
-            self.heartbeat.stop()
-        except Exception:
-            LOG.exception("Failed to get ironic port data!")
+            ironic_ports = self.ironic_client.ports(details=True)
+        except sdk_exc.OpenStackCloudException:
+            LOG.exception("Failed to get ironic ports data!")
 
         return ironic_ports
 
     def _report_state(self):
         node_states = {}
         ironic_ports = self._get_ironic_ports()
-        if not ironic_ports:
-            return
         for port in ironic_ports:
-            node = port.node_uuid
+            node = port.node_id
             if (self.agent_id not in
                     self.member_manager.hashring[node.encode('utf-8')]):
                 continue
@@ -267,7 +254,19 @@ class BaremetalNeutronAgent(service.ServiceBase):
                 {state['host']: state['configurations']})
 
 
+def _unregiser_deprecated_opts():
+    CONF.reset()
+    CONF.unregister_opts(
+        [CONF._groups[ironic_client.IRONIC_GROUP]._opts[opt]['opt']
+         for opt in ironic_client._deprecated_opts],
+        group=ironic_client.IRONIC_GROUP)
+
+
 def main():
+    # TODO(hjensas): Imports from neutron in ironic_neutron_agent registers the
+    # client options. We need to unregister the options we are deprecating
+    # first to avoid DuplicateOptError. Remove this when dropping deprecations.
+    _unregiser_deprecated_opts()
     common_config.init(sys.argv[1:])
     common_config.setup_logging()
     agent = BaremetalNeutronAgent()

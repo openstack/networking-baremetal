@@ -1,0 +1,23 @@
+---
+upgrade:
+  - |
+    Operators using ironic-neutron-agent with ``noauth`` authentication
+    strategy (i.e standalone ironic without keystone) must update the
+    configuration. Replace ``[ironic]/auth_strategy = noauth`` with
+    ``[ironic]/auth_type = none`` and set the ``[ironic]/endpoint_override``
+    option accordingly.
+deprecations:
+  - |
+    With the switch from ironicclient to openstacksdk the following options has
+    been deprecated.
+
+    * ``[ironic]/ironic_url`` replaced by ``[ironic]/endpoint_override``
+    * ``[ironic]/os_region`` replaced by ``[ironic]/region_name``
+    * ``[ironic]/retry_interval`` replaced by ``[ironic]/status_code_retries``
+    * ``[ironic]/max_retries`` replaced by ``[ironic]/status_code_retry_delay``
+    * ``[ironic]/auth_strategy`` is **ignored**, please use
+      ``[ironic]/auth_type`` instead.
+other:
+  - |
+    Communication with ironic is now using openstacksdk, removing the dependency
+    on ironicclient.
