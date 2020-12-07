@@ -1,0 +1,7 @@
+---
+fixes:
+  - |
+    Fixed the incorrect handling of exceptions from openstacksdk when querying
+    the list of ports from ironic, that caused the agent to stop reporting
+    its state. Also when there are problems querying ports, agent now does not
+    report an empty state, and rather waits for the next iteration to retry.

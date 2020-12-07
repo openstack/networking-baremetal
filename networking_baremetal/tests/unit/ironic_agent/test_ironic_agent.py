@@ -261,7 +261,12 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
     def test_ironic_port_list_fail(self, mock_log, mock_conn, mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         self.agent.ironic_client = mock_conn
-        mock_conn.ports.side_effect = sdk_exc.OpenStackCloudException()
+
+        def mock_generator(details=None):
+            raise sdk_exc.OpenStackCloudException()
+            yield
+
+        mock_conn.ports.side_effect = mock_generator
         self.agent._report_state()
         self.assertEqual(1, mock_log.call_count)
 

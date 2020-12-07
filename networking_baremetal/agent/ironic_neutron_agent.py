@@ -204,27 +204,28 @@ class BaremetalNeutronAgent(service.ServiceBase):
             'start_flag': False,
             'agent_type': constants.BAREMETAL_AGENT_TYPE}
 
-    def _get_ironic_ports(self):
-        ironic_ports = []
-        try:
-            ironic_ports = self.ironic_client.ports(details=True)
-        except sdk_exc.OpenStackCloudException:
-            LOG.exception("Failed to get ironic ports data!")
-
-        return ironic_ports
-
     def _report_state(self):
         node_states = {}
-        ironic_ports = self._get_ironic_ports()
-        for port in ironic_ports:
-            node = port.node_id
-            if (self.agent_id not in
-                    self.member_manager.hashring[node.encode('utf-8')]):
-                continue
-            node_states.setdefault(node, self.get_template_node_state(node))
-            mapping = node_states[node]["configurations"]["bridge_mappings"]
-            if port.physical_network is not None:
-                mapping[port.physical_network] = "yes"
+        ironic_ports = self.ironic_client.ports(details=True)
+        # NOTE: the above calls returns a generator, so we need to handle
+        # exceptions that happen just before the first loop iteration, when
+        # the actual request to ironic happens
+        try:
+            for port in ironic_ports:
+                node = port.node_id
+                if (self.agent_id not in
+                        self.member_manager.hashring[node.encode('utf-8')]):
+                    continue
+                template_node_state = self.get_template_node_state(node)
+                node_states.setdefault(node, template_node_state)
+                mapping = node_states[
+                    node]["configurations"]["bridge_mappings"]
+                if port.physical_network is not None:
+                    mapping[port.physical_network] = "yes"
+        except sdk_exc.OpenStackCloudException:
+            LOG.exception("Failed to get ironic ports data! "
+                          "Not reporting state.")
+            return
 
         for state in node_states.values():
             # If the node was not previously reported with current
