@@ -7,8 +7,6 @@
     check:
       jobs:
         - networking-baremetal-multitenant-vlans
-        - openstack-tox-lower-constraints
     gate:
       jobs:
         - networking-baremetal-multitenant-vlans
-        - openstack-tox-lower-constraints
