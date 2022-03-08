@@ -37,13 +37,17 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
     BAD_CONFIGS = {
         'bridge_mappings': {'wrong_physical_network': 'wrong_physnet'}
     }
-    AGENTS = [{'alive': True, 'configurations': GOOD_CONFIGS, 'host': 'host'}]
+    AGENTS = [{'agent_type': AGENT_TYPE, 'alive': True,
+               'configurations': GOOD_CONFIGS, 'host': 'host'}]
     AGENTS_DEAD = [
-        {'alive': False, 'configurations': GOOD_CONFIGS, 'host': 'dead_host'}
+        {'agent_type': AGENT_TYPE, 'alive': False,
+         'configurations': GOOD_CONFIGS, 'host': 'dead_host'}
     ]
     AGENTS_BAD = [
-        {'alive': False, 'configurations': GOOD_CONFIGS, 'host': 'bad_host_1'},
-        {'alive': True, 'configurations': BAD_CONFIGS, 'host': 'bad_host_2'}
+        {'agent_type': AGENT_TYPE, 'alive': False,
+         'configurations': GOOD_CONFIGS, 'host': 'bad_host_1'},
+        {'agent_type': AGENT_TYPE, 'alive': True,
+         'configurations': BAD_CONFIGS, 'host': 'bad_host_2'}
     ]
     VNIC_TYPE = portbindings.VNIC_BAREMETAL
 
