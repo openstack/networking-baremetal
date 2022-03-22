@@ -15,6 +15,16 @@ import re
 from networking_baremetal import constants
 
 
+class VlanStatus(enum.Enum):
+    """VLAN Admin state
+
+    ACTIVE: VLAN is active
+    SUSPENDED: VLAN is inactive / suspended
+    """
+    ACTIVE = constants.VLAN_ACTIVE
+    SUSPENDED = constants.VLAN_SUSPENDED
+
+
 class VlanInterfaceMode(enum.Enum):
     """VLAN interface mode (trunk or access)"""
     TRUNK = constants.VLAN_MODE_TRUNK

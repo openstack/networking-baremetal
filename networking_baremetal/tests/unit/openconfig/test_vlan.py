@@ -20,6 +20,88 @@ from networking_baremetal.openconfig.vlan import vlan
 
 class TestVlan(base.BaseTestCase):
 
+    @mock.patch.object(vlan, 'Vlan', autospec=True)
+    def test_vlans(self, mock_vlan):
+        mock_vlan.return_value.to_xml_element.side_effect = [
+            ElementTree.Element('fake-vlan-10'),
+            ElementTree.Element('fake-vlan-20')
+        ]
+        oc_vlans = vlan.Vlans()
+        oc_vlan = oc_vlans.add(10)
+        mock_vlan.assert_called_with(10)
+        self.assertEqual([oc_vlan], oc_vlans.vlans)
+        remove_vlan = oc_vlans.remove(20)
+        self.assertEqual([oc_vlan, remove_vlan], oc_vlans.vlans)
+        element = oc_vlans.to_xml_element()
+        xml_str = ElementTree.tostring(element).decode("utf-8")
+        expected = (f'<vlans xmlns="{oc_vlans.NAMESPACE}">'
+                    '<fake-vlan-10 />'
+                    '<fake-vlan-20 />'
+                    '</vlans>')
+        self.assertEqual(expected, xml_str)
+
+    @mock.patch.object(vlan, 'VlanConfig', autospec=True)
+    def test_vlan(self, mock_vlan_conf):
+        mock_vlan_conf.return_value.to_xml_element.return_value = (
+            ElementTree.Element('fake-vlan-conf'))
+        oc_vlan = vlan.Vlan(10)
+        self.assertEqual(constants.NetconfEditConfigOperation.MERGE.value,
+                         oc_vlan.operation)
+        self.assertEqual(10, oc_vlan.vlan_id)
+        self.assertRaises(TypeError,
+                          vlan.Vlan, 'not-int')
+        self.assertRaises(ValueError, vlan.Vlan, 20,
+                          **dict(operation='invalid'))
+        element = oc_vlan.to_xml_element()
+        xml_str = ElementTree.tostring(element).decode("utf-8")
+        expected = ('<vlan>'
+                    '<vlan-id operation="merge">10</vlan-id>'
+                    '<fake-vlan-conf />'
+                    '</vlan>')
+        self.assertEqual(expected, xml_str)
+        oc_vlan.operation = 'remove'
+        element = oc_vlan.to_xml_element()
+        xml_str = ElementTree.tostring(element).decode("utf-8")
+        expected = ('<vlan>'
+                    '<vlan-id operation="remove">10</vlan-id>'
+                    '<fake-vlan-conf />'
+                    '</vlan>')
+        self.assertEqual(expected, xml_str)
+
+    def test_vlan_config(self):
+        vlan_conf = vlan.VlanConfig()
+        self.assertEqual(constants.NetconfEditConfigOperation.MERGE.value,
+                         vlan_conf.operation)
+        self.assertRaises(ValueError, vlan.VlanConfig,
+                          **dict(operation='invalid'))
+        self.assertRaises(TypeError, vlan.VlanConfig,
+                          **dict(vlan_id='not-int'))
+        self.assertRaises(TypeError, vlan.VlanConfig,
+                          **dict(name=20))  # Not str
+        self.assertRaises(ValueError, vlan.VlanConfig,
+                          **dict(status='invalid'))
+        vlan_conf.vlan_id = 10
+        vlan_conf.name = 'Vlan10'
+        vlan_conf.status = 'ACTIVE'
+        element = vlan_conf.to_xml_element()
+        xml_str = ElementTree.tostring(element).decode("utf-8")
+        expected = ('<config operation="merge">'
+                    '<vlan-id>10</vlan-id>'
+                    '<name>Vlan10</name>'
+                    '<status>ACTIVE</status>'
+                    '</config>')
+        self.assertEqual(expected, xml_str)
+        vlan_conf.operation = 'delete'
+        vlan_conf.status = 'SUSPENDED'
+        element = vlan_conf.to_xml_element()
+        xml_str = ElementTree.tostring(element).decode("utf-8")
+        expected = ('<config operation="delete">'
+                    '<vlan-id>10</vlan-id>'
+                    '<name>Vlan10</name>'
+                    '<status>SUSPENDED</status>'
+                    '</config>')
+        self.assertEqual(expected, xml_str)
+
     @mock.patch.object(vlan, 'VlanSwitchedConfig', autospec=True)
     def test_switched_vlan(self, mock_switched_vlan_conf):
         mock_switched_vlan_conf.return_value.to_xml_element.return_value = (
