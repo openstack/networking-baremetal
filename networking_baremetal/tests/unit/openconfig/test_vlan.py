@@ -1,0 +1,73 @@
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+from unittest import mock
+from xml.etree import ElementTree
+
+from oslotest import base
+
+from networking_baremetal import constants
+from networking_baremetal.openconfig.vlan import vlan
+
+
+class TestVlan(base.BaseTestCase):
+
+    @mock.patch.object(vlan, 'VlanSwitchedConfig', autospec=True)
+    def test_switched_vlan(self, mock_switched_vlan_conf):
+        mock_switched_vlan_conf.return_value.to_xml_element.return_value = (
+            ElementTree.Element('fake-switched-vlan-config'))
+        switched_vlan = vlan.VlanSwitchedVlan()
+        element = switched_vlan.to_xml_element()
+        xml_str = ElementTree.tostring(element).decode("utf-8")
+        expected = (f'<switched-vlan xmlns="{switched_vlan.NAMESPACE}">'
+                    '<fake-switched-vlan-config />'
+                    '</switched-vlan>')
+        self.assertEqual(expected, xml_str)
+
+    def test_switched_vlan_config(self):
+        swithced_vlan_conf = vlan.VlanSwitchedConfig()
+        self.assertEqual(constants.NetconfEditConfigOperation.MERGE.value,
+                         swithced_vlan_conf.operation)
+        self.assertRaises(ValueError, vlan.VlanSwitchedConfig,
+                          **dict(operation='invalid'))
+        self.assertRaises(ValueError, vlan.VlanSwitchedConfig,
+                          **dict(interface_mode='invalid'))
+        self.assertRaises(TypeError, vlan.VlanSwitchedConfig,
+                          **dict(native_vlan='not-int'))
+        self.assertRaises(TypeError, vlan.VlanSwitchedConfig,
+                          **dict(access_vlan='not-int'))
+        swithced_vlan_conf.interface_mode = 'ACCESS'
+        swithced_vlan_conf.access_vlan = 20
+        element = swithced_vlan_conf.to_xml_element()
+        xml_str = ElementTree.tostring(element).decode("utf-8")
+        expected = ('<config operation="merge">'
+                    '<interface-mode>ACCESS</interface-mode>'
+                    '<access-vlan>20</access-vlan>'
+                    '</config>')
+        self.assertEqual(expected, xml_str)
+        del swithced_vlan_conf.access_vlan
+        swithced_vlan_conf.interface_mode = 'TRUNK'
+        swithced_vlan_conf.native_vlan = 30
+        swithced_vlan_conf.trunk_vlans.add('10..50')
+        swithced_vlan_conf.trunk_vlans.add('99')
+        swithced_vlan_conf.trunk_vlans.add(88)
+        swithced_vlan_conf.trunk_vlans.add('200..300')
+        element = swithced_vlan_conf.to_xml_element()
+        xml_str = ElementTree.tostring(element).decode("utf-8")
+        expected = ('<config operation="merge">'
+                    '<interface-mode>TRUNK</interface-mode>'
+                    '<native-vlan>30</native-vlan>'
+                    '<trunk-vlans>10..50</trunk-vlans>'
+                    '<trunk-vlans>99</trunk-vlans>'
+                    '<trunk-vlans>88</trunk-vlans>'
+                    '<trunk-vlans>200..300</trunk-vlans>'
+                    '</config>')
+        self.assertEqual(expected, xml_str)
