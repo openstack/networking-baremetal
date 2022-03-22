@@ -13,21 +13,21 @@ from xml.etree import ElementTree
 
 from networking_baremetal import common
 from networking_baremetal import constants
+from networking_baremetal.openconfig.interfaces import types
 from networking_baremetal.openconfig.vlan import vlan
 
 
-class InterfacesEthernetConfig:
-    """OpenConfig interface ethernet configuration"""
+class InterfacesAggregationConfig:
 
-    NAMESPACE = 'http://openconfig.net/yang/interfaces'
-    PARENT = 'interface'
+    NAMESPACE = 'http://openconfig.net/yang/interfaces/aggregate'
+    PARENT = 'aggregation'
     TAG = 'config'
 
-    def __init__(self, operation=constants.NetconfEditConfigOperation.MERGE):
+    def __init__(self,
+                 operation: str = constants.NetconfEditConfigOperation.MERGE):
         self.operation = operation
-        self._aggregate_id = None
-        self._aggregate_id_namespace = (
-            'http://openconfig.net/yang/interfaces/aggregate')
+        self._lag_type = None
+        self._min_links = None
 
     @property
     def operation(self):
@@ -50,45 +50,55 @@ class InterfacesEthernetConfig:
         self._operation = None
 
     @property
-    def aggregate_id(self):
-        """Logical aggregate interface for interface"""
-        return self._aggregate_id
+    def lag_type(self):
+        return self._lag_type.value if self._lag_type else None
 
-    @aggregate_id.setter
-    def aggregate_id(self, value: str):
-        """Set logical aggregate interface for interface"""
-        if not isinstance(value, str):
-            raise TypeError('aggregate_id must be string, got {}'
-                            .format(type(value)))
-        self._aggregate_id = value
+    @lag_type.setter
+    def lag_type(self, value: str):
+        """the type of LAG, i.e., how it is configured / maintained"""
+        self._lag_type = types.AggregationType(value)
 
-    @aggregate_id.deleter
-    def aggregate_id(self):
-        self._aggregate_id = None
+    @lag_type.deleter
+    def lag_type(self):
+        self._lag_type = None
+
+    @property
+    def min_links(self):
+        return self._min_links
+
+    @min_links.setter
+    def min_links(self, value: int):
+        self._min_links = value
+
+    @min_links.deleter
+    def min_links(self):
+        self._min_links = None
 
     def to_xml_element(self):
         """Create XML Element
 
         :return: ElementTree Element with SubElements
         """
-        element = ElementTree.Element(self.TAG)
+        elem = ElementTree.Element(self.TAG)
         if self.operation:
-            element.set('operation', self.operation)
-        if self.aggregate_id is not None:
-            common.txt_subelement(element, 'aggregate-id', self.aggregate_id,
-                                  xmlns=self._aggregate_id_namespace)
-        return element
+            elem.set('operation', self.operation)
+        if self.lag_type is not None:
+            common.txt_subelement(elem, 'lag-type', self.lag_type)
+        if self.min_links is not None:
+            common.txt_subelement(elem, 'min-links', str(self.min_links))
+        return elem
 
 
-class InterfacesEthernet:
-    """Ethernet configuration and state"""
-    NAMESPACE = 'http://openconfig.net/yang/interfaces/ethernet'
+class InterfacesAggregation:
+    """Options for logical interfaces representing aggregates"""
+
+    NAMESPACE = 'http://openconfig.net/yang/interfaces/aggregate'
     PARENT = 'interface'
-    TAG = 'ethernet'
+    TAG = 'aggregation'
 
     def __init__(self):
         self._switched_vlan = vlan.VlanSwitchedVlan()
-        self._config = InterfacesEthernetConfig()
+        self._config = InterfacesAggregationConfig()
 
     @property
     def switched_vlan(self):
@@ -97,7 +107,8 @@ class InterfacesEthernet:
     @switched_vlan.setter
     def switched_vlan(self, value):
         if not isinstance(value, vlan.VlanSwitchedVlan):
-            raise TypeError('switched_vlan must be VlanSwitchedVlan, got {}'
+            raise TypeError('switched_vlan must be '
+                            'OpenConfigVlanSwitchedVlan, got {}'
                             .format(type(value)))
         self._switched_vlan = value
 
@@ -107,14 +118,13 @@ class InterfacesEthernet:
 
     @property
     def config(self):
-        """Configuration parameters for interface"""
         return self._config
 
     @config.setter
     def config(self, value):
-        if not isinstance(value, InterfacesEthernetConfig):
-            raise TypeError('config must be InterfacesEthernetConfig, got {}'
-                            .format(type(value)))
+        if not isinstance(value, InterfacesAggregationConfig):
+            raise TypeError('config must be InterfacesAggregationConfig, got '
+                            '{}'.format(type(value)))
         self._config = value
 
     @config.deleter

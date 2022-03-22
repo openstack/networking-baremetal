@@ -15,6 +15,7 @@ from xml.etree import ElementTree
 
 from networking_baremetal import common
 from networking_baremetal import constants
+from networking_baremetal.openconfig.interfaces import aggregate
 from networking_baremetal.openconfig.interfaces import ethernet
 
 
@@ -243,6 +244,66 @@ class InterfaceEthernet(BaseInterface):
         return elem
 
 
+class InterfaceAggregate(BaseInterface):
+
+    def __init__(self, name: str,
+                 operation: str = constants.NetconfEditConfigOperation.MERGE):
+        super(InterfaceAggregate, self).__init__(name)
+        self.operation = operation
+        self._aggregation = aggregate.InterfacesAggregation()
+
+    @property
+    def operation(self):
+        """RFC 6241 - <edit-config> operation attribute"""
+        return self._operation.value if self._operation else None
+
+    @operation.setter
+    def operation(self, value):
+        """RFC 6241 - <edit-config> operation attribute"""
+        if isinstance(value, constants.NetconfEditConfigOperation):
+            self._operation = value
+        elif isinstance(value, str):
+            self._operation = constants.NetconfEditConfigOperation(value)
+        else:
+            raise TypeError('Invalid type {} for config operation attribute.'
+                            .format(type(value)))
+
+    @operation.deleter
+    def operation(self):
+        self._operation = None
+
+    @property
+    def aggregation(self):
+        """Ethernet configuration and state"""
+        return self._aggregation
+
+    @aggregation.setter
+    def aggregation(self, value):
+        if not isinstance(value, aggregate.InterfacesAggregation):
+            raise TypeError('ethernet must be OpenConfigInterfacesAggregation,'
+                            'got {}'.format(type(value)))
+        self._aggregation = value
+
+    @aggregation.deleter
+    def aggregation(self):
+        self._aggregation = None
+
+    def to_xml_element(self):
+        """Create XML Element
+
+        :return: ElementTree Element with SubElements
+        """
+        elem = ElementTree.Element(self.TAG)
+        if self.operation:
+            elem.set('operation', self.operation)
+        common.txt_subelement(elem, 'name', self.name)
+        if self.config:
+            elem.append(self.config.to_xml_element())
+        if self.aggregation:
+            elem.append(self.aggregation.to_xml_element())
+        return elem
+
+
 class Interfaces(abc.Collection):
     """Group/List of interfaces"""
 
@@ -273,11 +334,13 @@ class Interfaces(abc.Collection):
 
         :param name: Interface name
         :type: str
-        :param interface_type: Interface type ('ethernet', 'base')
+        :param interface_type: Interface type ('ethernet', 'aggregate', 'base')
         :type: str
         """
         if interface_type == constants.IFACE_TYPE_ETHERNET:
             interface = InterfaceEthernet(name)
+        elif interface_type == constants.IFACE_TYPE_AGGREGATE:
+            interface = InterfaceAggregate(name)
         elif interface_type == constants.IFACE_TYPE_BASE:
             interface = BaseInterface(name)
         else:
