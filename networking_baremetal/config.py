@@ -13,13 +13,16 @@
 from oslo_config import cfg
 from oslo_log import log as logging
 
+import networking_baremetal.drivers.netconf.openconfig as netconf_openconfig
+
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
 
 _opts = [
     cfg.ListOpt('enabled_devices',
                 default=[],
-                sample_default=['device.example.com'],
+                sample_default=['generic.example.com',
+                                'netconf-openconfig.example.com'],
                 help=('Enabled devices for which the plugin should manage'
                       'configuration. Driver specific configuration for each '
                       'device must be added in separate sections.')),
@@ -58,7 +61,10 @@ for device in CONF.networking_baremetal.enabled_devices:
 
 def list_opts():
     return [('networking_baremetal', _opts),
-            ('device.example.com', _device_opts)]
+            ('generic.example.com', _device_opts),
+            ('netconf-openconfig.example.com',
+             _device_opts + netconf_openconfig._DEVICE_OPTS
+             + netconf_openconfig._NCCLIENT_OPTS)]
 
 
 def get_devices():

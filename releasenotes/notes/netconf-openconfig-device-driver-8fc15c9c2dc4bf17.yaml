@@ -1,0 +1,8 @@
+---
+features:
+  - |
+    Added an `OpenConfig <http://openconfig.net>`__ based device driver
+    (driver name: ``netconf-openconfig``) using Network Configuration Protocol
+    (**NETCONF**). Implements network create, delete and update functionality
+    as well as port create, delete and update.
+
