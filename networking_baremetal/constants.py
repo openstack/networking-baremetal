@@ -17,6 +17,9 @@ import enum
 BAREMETAL_AGENT_TYPE = "Baremetal Node"
 BAREMETAL_BINARY = 'ironic-neutron-agent'
 
+LOCAL_LINK_INFO = 'local_link_information'
+LOCAL_GROUP_INFO = 'local_group_information'
+
 IFACE_TYPE_ETHERNET = 'ethernet'
 IFACE_TYPE_AGGREGATE = 'aggregate'
 IFACE_TYPE_BASE = 'base'
@@ -31,11 +34,24 @@ LACP_PERIOD_SLOW = 'SLOW'
 LACP_ACTIVITY_ACTIVE = 'ACTIVE'
 LACP_ACTIVITY_PASSIVE = 'PASSIVE'
 
+# These bond modes require switch configuration the plugin cannot create.
+PRE_CONF_ONLY_BOND_MODES = {'balance-rr', '0',
+                            'balance-xor', '2',
+                            'broadcast', '3'}
+LACP_BOND_MODES = {'802.3ad', '4'}
+NON_SWITCH_BOND_MODES = {'active-backup', '1',
+                         'balance-tlb', '5',
+                         'balance-alb', '6'}
+
 VLAN_ACTIVE = 'ACTIVE'
 VLAN_SUSPENDED = 'SUSPENDED'
 VLAN_MODE_TRUNK = 'TRUNK'
 VLAN_MODE_ACCESS = 'ACCESS'
 VLAN_RANGE = range(1, 4094)
+
+PORT_ID = 'port_id'
+SWITCH_ID = 'switch_id'
+SWITCH_INFO = 'switch_info'
 
 
 class NetconfEditConfigOperation(enum.Enum):
@@ -79,3 +95,32 @@ class NetconfEditConfigOperation(enum.Enum):
     CREATE = 'create'
     DELETE = 'delete'
     REMOVE = 'remove'
+
+
+CFG_ELEMENT = 'config'
+
+IANA_NETCONF_CAPABILITIES = {
+    # [RFC4741][RFC6241]
+    ':base:1.0':
+        'urn:ietf:params:netconf:base:1.0',
+    # [RFC4741]
+    ':confirmed-commit':
+        'urn:ietf:params:netconf:capability:confirmed-commit:1.0',
+    ':validate':
+        'urn:ietf:params:netconf:capability:validate:1.0',
+    # [RFC6241]
+    ':base:1.1':
+        'urn:ietf:params:netconf:base:1.1',
+    ':writable-running':
+        'urn:ietf:params:netconf:capability:writable-running:1.0',
+    ':candidate':
+        'urn:ietf:params:netconf:capability:candidate:1.0',
+    ':confirmed-commit:1.1':
+        'urn:ietf:params:netconf:capability:confirmed-commit:1.1',
+    ':rollback-on-error':
+        'urn:ietf:params:netconf:capability:rollback-on-error:1.0',
+    ':validate:1.1':
+        'urn:ietf:params:netconf:capability:validate:1.1',
+    ':startup':
+        'urn:ietf:params:netconf:capability:startup:1.0',
+}

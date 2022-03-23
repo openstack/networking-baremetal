@@ -1,0 +1,7 @@
+---
+features:
+  - |
+    A device management driver interface using stevedore for dynamic loading
+    has been added. The base driver includes two abstract base classes
+    `BaseDeviceDriver` and `BaseDeviceClient`.
+

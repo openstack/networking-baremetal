@@ -60,9 +60,10 @@ def get_test_port(network_id, **kw):
         "revision_number": kw.get("revision_number", 7),
         "port_security_enabled": kw.get("port_security_enabled", False),
         "binding:profile": kw.get("binding_profile",
-                                  {'switch_info': 'foo',
-                                   'port_id': 'Gig0/1',
-                                   'switch_id': 'aa:bb:cc:dd:ee:ff'}),
+                                  {'local_link_information': [
+                                      {'switch_info': 'foo',
+                                       'port_id': 'Gig0/1',
+                                       'switch_id': 'aa:bb:cc:dd:ee:ff'}]}),
         "fixed_ips": kw.get("fixed_ips", []),
         "id": kw.get("id", uuidutils.generate_uuid()),
         "security_groups": kw.get("security_groups", []),
