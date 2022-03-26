@@ -1,0 +1,6 @@
+---
+features:
+  - |
+    Added support to configure LACP (802.3ad) link-aggregates in the
+    ``netconf-openconfig`` device driver.
+

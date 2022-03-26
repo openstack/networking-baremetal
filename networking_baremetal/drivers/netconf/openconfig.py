@@ -9,11 +9,12 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+import random
 import re
 from urllib.parse import parse_qs as urlparse_qs
 from urllib.parse import urlparse
 import uuid
-from xml.etree.ElementTree import fromstring as etree_fromstring
+from xml.etree import ElementTree
 
 from ncclient import manager
 from ncclient.operations.rpc import RPCError
@@ -35,6 +36,7 @@ from networking_baremetal.constants import NetconfEditConfigOperation as nc_op
 from networking_baremetal.drivers import base
 from networking_baremetal import exceptions
 from networking_baremetal.openconfig.interfaces import interfaces
+from networking_baremetal.openconfig.lacp import lacp
 from networking_baremetal.openconfig.network_instance import network_instance
 from networking_baremetal.openconfig.vlan import vlan
 
@@ -44,6 +46,7 @@ LOG = logging.getLogger(__name__)
 LOCK_DENIED_TAG = 'lock-denied'  # [RFC 4741]
 CANDIDATE = 'candidate'
 RUNNING = 'running'
+DEFERRED = 'deferred'
 
 # Options for the device, maps to the local_link_information in the
 # port binding profile.
@@ -67,7 +70,23 @@ _DEVICE_OPTS = [
                     choices=['port_mtu']),
                 default=[],
                 help=('A list of properties that should not be used, '
-                      'currently only "port_mtu" is valid'))
+                      'currently only "port_mtu" is valid')),
+    cfg.BoolOpt('manage_lacp_aggregates',
+                default=True,
+                help=('When set to true the driver will manage LACP '
+                      'aggregates if link_group_information is defined in '
+                      'the binding:profile. When this is false the driver '
+                      'expect the link aggregation to be pre-configured on '
+                      'the device, and only perform vlan plugging.')),
+    cfg.StrOpt('link_aggregate_prefix',
+               default='Port-Channel',
+               help=('The device specific prefix used for link-aggregation '
+                     'ports. Common values: "po", "port-channel" or '
+                     '"Port-Channel".')),
+    cfg.StrOpt('link_aggregate_range',
+               default='1000..2000',
+               help=('Range of link aggregation interface IDs that the driver '
+                     'can use when managing link aggregates.')),
 ]
 
 # Configuration option for Netconf client connection
@@ -139,7 +158,7 @@ class NetconfOpenConfigClient(base.BaseDeviceClient):
         Description:    Access to the requested lock is denied because the
                         lock is currently held by another entity.
         """
-        root = etree_fromstring(err_info)
+        root = ElementTree.fromstring(err_info)
         session_id = root.find(
             "./{urn:ietf:params:xml:ns:netconf:base:1.0}session-id").text
 
@@ -197,18 +216,41 @@ class NetconfOpenConfigClient(base.BaseDeviceClient):
 
         return args
 
-    def get(self):
+    def get(self, **kwargs):
         """Get current configuration/staate from device"""
-        pass
+        # https://github.com/ncclient/ncclient/issues/525
+        _ignore_close_issue_525 = False
+
+        query = kwargs.get('query')
+        q_filter = ElementTree.tostring(query.to_xml_element()).decode('utf-8')
+        try:
+            with manager.connect(**self.get_client_args()) as client:
+                reply = client.get(filter=('subtree', q_filter))
+                _ignore_close_issue_525 = True
+        except SessionCloseError as e:
+            # https://github.com/ncclient/ncclient/issues/525
+            if not _ignore_close_issue_525:
+                raise e
+        except RPCError as e:
+            LOG.error('Netconf XML: %s', q_filter)
+            raise e
+
+        return reply.data_xml
 
     @tenacity.retry(
         reraise=True,
         retry=tenacity.retry_if_exception_type(NetconfLockDenied),
         wait=tenacity.wait_random_exponential(multiplier=1, min=2, max=10),
         stop=tenacity.stop_after_attempt(5))
-    def get_lock_and_configure(self, client, source, config):
+    def get_lock_and_configure(self, client, source, config,
+                               deferred_allocations):
         try:
             with client.locked(source):
+                # Aggregate ID deferred until we have config lock
+                # Get free aggregate ID by querying the device and update conf
+                if deferred_allocations:
+                    aggregate_id = self.get_free_aggregate_id(client)
+                    self.allocate_deferred(aggregate_id, config)
                 xml_config = common.config_to_xml(config)
                 LOG.info(
                     'Sending configuration to Netconf device %(dev)s: '
@@ -251,10 +293,15 @@ class NetconfOpenConfigClient(base.BaseDeviceClient):
                 LOG.error('Netconf XML: %s', common.config_to_xml(config))
                 raise err
 
-    def edit_config(self, config):
+    def edit_config(self, config, deferred_allocations=False):
         """Edit configuration on the device
 
         :param config: Configuration, or list of configurations
+        :param deferred_allocations: Used for link aggregates, the aggregate
+          id cannot be allocated before device config is locked. When this
+          is true an available aggregate id is identified by querying the
+          device, and the configuration objects are updated accordingly before
+          configuration is sent to the device.
         """
 
         # https://github.com/ncclient/ncclient/issues/525
@@ -268,19 +315,83 @@ class NetconfOpenConfigClient(base.BaseDeviceClient):
                 self.capabilities = self.process_capabilities(
                     client.server_capabilities)
                 if ':candidate' in self.capabilities:
-                    self.get_lock_and_configure(client, CANDIDATE, config)
+                    self.get_lock_and_configure(
+                        client, CANDIDATE, config, deferred_allocations)
                     _ignore_close_issue_525 = True
                 elif ':writable-running' in self.capabilities:
-                    self.get_lock_and_configure(client, RUNNING, config)
+                    self.get_lock_and_configure(
+                        client, RUNNING, config, deferred_allocations)
                     _ignore_close_issue_525 = True
         except SessionCloseError as e:
             if not _ignore_close_issue_525:
                 raise e
 
+    def get_aggregation_ids(self):
+        """Get aggregation IDs and aggregation prefix from config"""
+        prefix = CONF[self.device].link_aggregate_prefix
+        aggregate_id_range = CONF[self.device].link_aggregate_range.split('..')
+        aggregate_ids = {f'{prefix}{x}'
+                         for x in range(int(aggregate_id_range[0]),
+                                        int(aggregate_id_range[1]) + 1)}
+        return aggregate_ids
+
+    @staticmethod
+    def allocate_deferred(aggregate_id, config):
+        """Set aggregation id where it was deffered
+
+        :param aggregate_id: Aggregation ID for the link aggregate,
+            for example 'po123'
+        :param config: Configuration objects to update
+        """
+        for conf in config:
+            if isinstance(conf, interfaces.Interfaces):
+                for iface in conf:
+                    if isinstance(iface, interfaces.InterfaceAggregate):
+                        if iface.name == DEFERRED:
+                            iface.name = aggregate_id
+                        if iface.config.name == DEFERRED:
+                            iface.config.name = aggregate_id
+                    elif isinstance(iface, interfaces.InterfaceEthernet):
+                        if iface.ethernet.config.aggregate_id == DEFERRED:
+                            iface.ethernet.config.aggregate_id = aggregate_id
+            if isinstance(conf, lacp.LACP):
+                for lacp_iface in conf.interfaces.interfaces:
+                    if lacp_iface.name == DEFERRED:
+                        lacp_iface.name = aggregate_id
+
+    def get_free_aggregate_id(self, client_locked):
+        """Get free aggregate id by querying device config
+
+        :param client_locked: Netconf client with active
+            configuration lock
+        """
+        aggregate_prefix = CONF[self.device].link_aggregate_prefix
+        aggregate_ids = self.get_aggregation_ids()
+        # Create a interfaces query
+        oc_ifaces = interfaces.Interfaces()
+        # Use empty string for the name, so the 'get' return all interfaces
+        oc_iface = oc_ifaces.add('', interface_type=constants.IFACE_TYPE_BASE)
+        # Don't need the config group
+        del oc_iface.config
+        # Get interfaces from device
+        element = oc_ifaces.to_xml_element()
+        device_interfaces = client_locked.get(filter=(
+            'subtree', ElementTree.tostring(element).decode("utf-8")))
+        # Find all interface names and filter on aggregate_prefix
+        root = ElementTree.fromstring(device_interfaces.data_xml)
+        used_aggregate_ids = {
+            x.text for x in root.findall(f'.//{{{oc_ifaces.NAMESPACE}}}name')
+            if x.text.startswith(aggregate_prefix)}
+        # Get the difference, and make a random choice
+        available_aggregate_ids = aggregate_ids.difference(used_aggregate_ids)
+
+        return random.choice(list(available_aggregate_ids))
+
 
 class NetconfOpenConfigDriver(base.BaseDeviceDriver):
 
-    SUPPORTED_BOND_MODES = set().union(constants.NON_SWITCH_BOND_MODES)
+    SUPPORTED_BOND_MODES = set().union(constants.NON_SWITCH_BOND_MODES,
+                                       constants.LACP_BOND_MODES)
 
     def __init__(self, device):
         super().__init__(device)
@@ -401,8 +512,6 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
         """
         port = context.current
         binding_profile = port[portbindings.PROFILE]
-        local_link_information = binding_profile.get(
-            constants.LOCAL_LINK_INFO)
         local_group_information = binding_profile.get(
             constants.LOCAL_GROUP_INFO, {})
         bond_mode = local_group_information.get('bond_mode')
@@ -418,11 +527,9 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
         if not bond_mode or bond_mode in constants.NON_SWITCH_BOND_MODES:
             self.create_non_bond(context, switched_vlan, links)
         elif bond_mode in constants.LACP_BOND_MODES:
-            if len(local_link_information) == len(links):
+            if CONF[self.device].manage_lacp_aggregates:
                 self.create_lacp_aggregate(context, switched_vlan, links)
             else:
-                # Some links is on a different device,
-                # MLAG aggregate must be pre-configured.
                 self.create_pre_conf_aggregate(context, switched_vlan, links)
         elif bond_mode in constants.PRE_CONF_ONLY_BOND_MODES:
             self.create_pre_conf_aggregate(context, switched_vlan, links)
@@ -465,7 +572,59 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
         :param switched_vlan: switched_vlan OpenConfig object
         :param links: Local link information filtered for the device.
         """
-        pass
+        port = context.current
+        network = context.network.current
+        binding_profile = port[portbindings.PROFILE]
+        local_group_information = binding_profile.get(
+            constants.LOCAL_GROUP_INFO, {})
+        dev_type = CONF[self.device].device_params.get('name')
+        bond_properties = local_group_information.get('bond_properties', {})
+        lacp_interval = bond_properties.get(constants.LACP_INTERVAL)
+        min_links = bond_properties.get(constants.LACP_MIN_LINKS)
+        ifaces = interfaces.Interfaces()
+        _lacp = lacp.LACP()
+        lacp_iface = _lacp.interfaces.add(DEFERRED)
+        lacp_iface.operation = nc_op.REPLACE
+        lacp_iface.config.interval = (constants.LACP_PERIOD_FAST
+                                      if lacp_interval in {'fast', 1, '1'}
+                                      else constants.LACP_PERIOD_SLOW)
+        # NX-API only allows configuring LACP interval rate on a port-channel
+        # member which is not in shutdown state. Support would require a two
+        # commit approach.
+        if dev_type in {'nexus'}:
+            LOG.warning('IGNORING LACP interval (bond_lacp_rate). The driver '
+                        'does not support LACP interval for this device type. '
+                        'Device: %(device)s, Port: %(port)s',
+                        {'device': self.device, 'port': port[api.ID]})
+            del lacp_iface.config.interval
+
+        for link in links:
+            link_port_id = link.get(constants.PORT_ID)
+            link_port_id = self._port_id_resub(link_port_id)
+            iface = ifaces.add(
+                link_port_id, interface_type=constants.IFACE_TYPE_ETHERNET)
+            iface.config.operation = nc_op.MERGE
+            iface.config.enabled = port['admin_state_up']
+            if 'port_mtu' not in CONF[self.device].disabled_properties:
+                iface.config.mtu = network[api.MTU]
+            iface.config.description = f'neutron-{port[api.ID]}'
+            iface.ethernet.config.aggregate_id = DEFERRED
+
+        iface = ifaces.add(DEFERRED,
+                           interface_type=constants.IFACE_TYPE_AGGREGATE)
+        iface.config.operation = nc_op.MERGE
+        iface.config.name = DEFERRED
+        iface.config.enabled = port['admin_state_up']
+        iface.config.description = f'neutron-{port[api.ID]}'
+        iface.aggregation.config.lag_type = constants.LAG_TYPE_LACP
+        if min_links:
+            iface.aggregation.config.min_links = int(min_links)
+        if switched_vlan is not None:
+            iface.aggregation.switched_vlan = switched_vlan
+        else:
+            del iface.aggregation.switched_vlan
+
+        self.client.edit_config([ifaces, _lacp], deferred_allocations=True)
 
     def create_pre_conf_aggregate(self, context, switched_vlan, links):
         """Create/Configure pre-configured aggregate on device
@@ -492,8 +651,6 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
 
         port = context.current
         binding_profile = port[portbindings.PROFILE]
-        local_link_information = binding_profile.get(
-            constants.LOCAL_LINK_INFO)
         local_group_information = binding_profile.get(
             constants.LOCAL_GROUP_INFO, {})
         bond_mode = local_group_information.get('bond_mode')
@@ -501,11 +658,9 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
         if not bond_mode or bond_mode in constants.NON_SWITCH_BOND_MODES:
             self.update_non_bond(context, links)
         elif bond_mode in constants.LACP_BOND_MODES:
-            if len(local_link_information) == len(links):
+            if CONF[self.device].manage_lacp_aggregates:
                 self.update_lacp_aggregate(context, links)
             else:
-                # Some links is on a different device,
-                # MLAG aggregate must be pre-configured.
                 self.update_pre_conf_aggregate(context, links)
         elif bond_mode in constants.PRE_CONF_ONLY_BOND_MODES:
             self.update_pre_conf_aggregate(context, links)
@@ -543,7 +698,30 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
             to the update_port call.
         :param links: Local link information filtered for the device.
         """
-        pass
+        port = context.current
+        network = context.network.current
+        aggregate_ids = self.get_aggregate_ids(links)
+        ifaces = interfaces.Interfaces()
+        for link in links:
+            link_port_id = link.get(constants.PORT_ID)
+            link_port_id = self._port_id_resub(link_port_id)
+
+            iface = ifaces.add(link_port_id,
+                               interface_type=constants.IFACE_TYPE_ETHERNET)
+            iface.config.enabled = port['admin_state_up']
+            if 'port_mtu' not in CONF[self.device].disabled_properties:
+                iface.config.mtu = network[api.MTU]
+
+            del iface.ethernet
+
+        for aggregate_id in aggregate_ids:
+            iface = ifaces.add(aggregate_id,
+                               interface_type=constants.IFACE_TYPE_AGGREGATE)
+            iface.operation = nc_op.MERGE
+            iface.config.enabled = port['admin_state_up']
+            del iface.aggregation
+
+        self.client.edit_config(ifaces)
 
     def update_pre_conf_aggregate(self, context, links):
         """Update pre-configured aggregate on device
@@ -567,8 +745,6 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
         """
         port = context.current if current else context.original
         binding_profile = port[portbindings.PROFILE]
-        local_link_information = binding_profile.get(
-            constants.LOCAL_LINK_INFO)
         local_group_information = binding_profile.get(
             constants.LOCAL_GROUP_INFO, {})
         bond_mode = local_group_information.get('bond_mode')
@@ -576,11 +752,9 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
         if not bond_mode or bond_mode in constants.NON_SWITCH_BOND_MODES:
             self.delete_non_bond(context, links)
         elif bond_mode in constants.LACP_BOND_MODES:
-            if len(local_link_information) == len(links):
+            if CONF[self.device].manage_lacp_aggregates:
                 self.delete_lacp_aggregate(context, links)
             else:
-                # Some links is on a different device,
-                # MLAG aggregate must be pre-configured.
                 self.delete_pre_conf_aggregate(links)
         elif bond_mode in constants.PRE_CONF_ONLY_BOND_MODES:
             self.delete_pre_conf_aggregate(links)
@@ -622,7 +796,41 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
             to the update_port call.
         :param links: Local link information filtered for the device.
         """
-        pass
+        network = context.network.current
+        aggregate_ids = self.get_aggregate_ids(links)
+        ifaces = interfaces.Interfaces()
+        for link in links:
+            link_port_id = link.get(constants.PORT_ID)
+            link_port_id = self._port_id_resub(link_port_id)
+            # Set up interface links for config remove
+            iface = ifaces.add(link_port_id,
+                               interface_type=constants.IFACE_TYPE_ETHERNET)
+            iface.config.operation = nc_op.REMOVE
+            iface.config.description = ''
+            iface.config.enabled = False
+            if 'port_mtu' not in CONF[self.device].disabled_properties:
+                iface.config.mtu = 0
+            iface.ethernet.config.operation = nc_op.REMOVE
+            if network[provider_net.NETWORK_TYPE] == n_const.TYPE_VLAN:
+                iface.ethernet.switched_vlan.config.operation = nc_op.REMOVE
+            else:
+                del iface.ethernet.switched_vlan
+
+        # Set up lacp and aggregate interface for removal
+        _lacp = lacp.LACP()
+        for aggregate_id in aggregate_ids:
+            # Remove LACP interface
+            lacp_iface = _lacp.interfaces.add(aggregate_id)
+            lacp_iface.operation = nc_op.REMOVE
+            del lacp_iface.config
+            # Remove Aggregate interface
+            iface = ifaces.add(aggregate_id,
+                               interface_type=constants.IFACE_TYPE_AGGREGATE)
+            iface.operation = nc_op.REMOVE
+            del iface.config
+            del iface.aggregation
+
+        self.client.edit_config([_lacp, ifaces])
 
     def delete_pre_conf_aggregate(self, links):
         """Delete/Un-configure pre-configured aggregate on device
@@ -653,6 +861,28 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
             link_port_id = re.sub(pattern, repl, link_port_id)
 
         return link_port_id
+
+    def get_aggregate_ids(self, links):
+        query = interfaces.Interfaces()
+        for link in links:
+            link_port_id = link.get(constants.PORT_ID)
+            link_port_id = self._port_id_resub(link_port_id)
+            # Set up query
+            q_iface = query.add(link_port_id,
+                                interface_type=constants.IFACE_TYPE_ETHERNET)
+            # Remove config and ethernet for broad filter.
+            del q_iface.config
+            del q_iface.ethernet
+
+        # Get aggregate ids by querying the link interfaces
+        xml_result = self.client.get(query=query)
+        root = ElementTree.fromstring(xml_result)
+        xpath_query_result = root.findall(
+            './/{http://openconfig.net/yang/interfaces/aggregate}'
+            'aggregate-id')
+        aggregate_ids = {x.text for x in xpath_query_result}
+
+        return aggregate_ids
 
     @staticmethod
     def admin_state_changed(context):

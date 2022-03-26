@@ -33,6 +33,8 @@ LACP_PERIOD_FAST = 'FAST'
 LACP_PERIOD_SLOW = 'SLOW'
 LACP_ACTIVITY_ACTIVE = 'ACTIVE'
 LACP_ACTIVITY_PASSIVE = 'PASSIVE'
+LACP_MIN_LINKS = 'bond_min_links'
+LACP_INTERVAL = 'bond_lacp_rate'
 
 # These bond modes require switch configuration the plugin cannot create.
 PRE_CONF_ONLY_BOND_MODES = {'balance-rr', '0',
