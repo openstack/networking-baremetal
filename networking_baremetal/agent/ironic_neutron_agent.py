@@ -264,6 +264,7 @@ def _unregiser_deprecated_opts():
 
 
 def main():
+    common_config.register_common_config_options()
     # TODO(hjensas): Imports from neutron in ironic_neutron_agent registers the
     # client options. We need to unregister the options we are deprecating
     # first to avoid DuplicateOptError. Remove this when dropping deprecations.
