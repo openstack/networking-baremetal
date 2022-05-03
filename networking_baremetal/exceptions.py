@@ -23,3 +23,8 @@ class DriverValidationError(n_exc.NeutronException):
 
 class DeviceConnectionError(n_exc.NeutronException):
     message = 'Driver failed connecting to device %(device)s: %(err)s'
+
+
+class PreConfiguredAggrergateNotFound(n_exc.NeutronException):
+    message = ('Driver could not find the aggregate ID for the pre-configured '
+               'link aggregate for links %(links)s on device %(device)s.')

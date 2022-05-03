@@ -997,3 +997,158 @@ class TestNetconfOpenConfigDriver(base.TestCase):
         self.assertEqual(lacp_iface.name, 'Po10')
         self.assertEqual(lacp_iface.operation, nc_op.REMOVE.value)
         self.assertIsNone(lacp_iface.config)
+
+    def test_create_pre_configured_aggregate_port_vlan(self):
+        tenant_id = uuidutils.generate_uuid()
+        network_id = uuidutils.generate_uuid()
+        project_id = uuidutils.generate_uuid()
+        m_nc = mock.create_autospec(driver_context.NetworkContext)
+        m_pc = mock.create_autospec(driver_context.PortContext)
+        binding_profile = {
+            constants.LOCAL_LINK_INFO: [
+                {'port_id': 'foo1/1', 'switch_id': 'aa:bb:cc:dd:ee:ff',
+                 'switch_info': 'foo'},
+                {'port_id': 'foo1/2', 'switch_id': 'aa:bb:cc:dd:ee:ff',
+                 'switch_info': 'foo'}],
+            constants.LOCAL_GROUP_INFO: {
+                'id': uuidutils.generate_uuid(),
+                'name': 'PortGroup1',
+                'bond_mode': 'balance-rr',
+            }
+        }
+        m_nc.current = ml2_utils.get_test_network(
+            id=network_id, tenant_id=tenant_id, project_id=project_id,
+            network_type=n_const.TYPE_VLAN, segmentation_id=40)
+        m_pc.current = ml2_utils.get_test_port(
+            network_id=network_id, tenant_id=tenant_id, project_id=project_id,
+            binding_profile=binding_profile)
+        m_pc.network = m_nc
+        segment = {
+            api.ID: uuidutils.generate_uuid(),
+            api.PHYSICAL_NETWORK:
+                m_nc.current['provider:physical_network'],
+            api.NETWORK_TYPE: m_nc.current['provider:network_type'],
+            api.SEGMENTATION_ID: m_nc.current['provider:segmentation_id']}
+        links = m_pc.current['binding:profile'][constants.LOCAL_LINK_INFO]
+        self.driver.client.get.return_value = XML_IFACES_AGGREDATE_ID
+        self.driver.create_port(m_pc, segment, links)
+        self.driver.client.get.assert_called_once()
+        self.driver.client.edit_config.assert_called_once()
+        # Validate the query to get aggregate id
+        query_call_args = self.driver.client.get.call_args
+        ifaces = query_call_args[1]['query']
+        iface_a = list(ifaces)[0]
+        iface_b = list(ifaces)[1]
+        self.assertEqual(iface_a.name, 'foo1/1')
+        self.assertEqual(iface_b.name, 'foo1/2')
+        self.assertIsNone(iface_a.config)
+        self.assertIsNone(iface_a.ethernet)
+        self.assertIsNone(iface_b.config)
+        self.assertIsNone(iface_b.ethernet)
+        # Validate the edit config call
+        edit_call_args_list = self.driver.client.edit_config.call_args_list
+        ifaces = list(edit_call_args_list[0][0][0])
+        if_agg = ifaces[0]
+        assert isinstance(if_agg, interfaces.InterfaceAggregate)
+        self.assertEqual(if_agg.name, 'Po10')
+        self.assertEqual(if_agg.operation, nc_op.MERGE.value)
+        self.assertEqual(True, if_agg.config.enabled)
+        self.assertEqual(if_agg.aggregation.switched_vlan.config.operation,
+                         nc_op.REPLACE.value)
+        self.assertEqual(
+            if_agg.aggregation.switched_vlan.config.interface_mode,
+            constants.VLAN_MODE_ACCESS)
+        self.assertEqual(if_agg.aggregation.switched_vlan.config.access_vlan,
+                         segment[api.SEGMENTATION_ID])
+
+    def test_update_pre_configured_aggregate_port_vlan(self):
+        tenant_id = uuidutils.generate_uuid()
+        network_id = uuidutils.generate_uuid()
+        project_id = uuidutils.generate_uuid()
+        m_nc = mock.create_autospec(driver_context.NetworkContext)
+        m_pc = mock.create_autospec(driver_context.PortContext)
+        binding_profile = {
+            constants.LOCAL_LINK_INFO: [
+                {'port_id': 'foo1/1', 'switch_id': 'aa:bb:cc:dd:ee:ff',
+                 'switch_info': 'foo'},
+                {'port_id': 'foo1/2', 'switch_id': 'aa:bb:cc:dd:ee:ff',
+                 'switch_info': 'foo'}],
+            constants.LOCAL_GROUP_INFO: {
+                'id': uuidutils.generate_uuid(),
+                'name': 'PortGroup1',
+                'bond_mode': 'balance-rr',
+            }
+        }
+        m_nc.current = ml2_utils.get_test_network(
+            id=network_id, tenant_id=tenant_id, project_id=project_id,
+            network_type=n_const.TYPE_VLAN, segmentation_id=15)
+        m_nc.original = ml2_utils.get_test_network(
+            id=network_id, tenant_id=tenant_id, project_id=project_id,
+            network_type=n_const.TYPE_VLAN, segmentation_id=15)
+        m_pc.current = ml2_utils.get_test_port(
+            network_id=network_id, tenant_id=tenant_id, project_id=project_id,
+            admin_state_up=False, binding_profile=binding_profile)
+        m_pc.original = ml2_utils.get_test_port(
+            network_id=network_id, tenant_id=tenant_id, project_id=project_id,
+            admin_state_up=True, binding_profile=binding_profile)
+        m_pc.network = m_nc
+        links = m_pc.current['binding:profile'][constants.LOCAL_LINK_INFO]
+        self.driver.client.get.return_value = XML_IFACES_AGGREDATE_ID
+        self.driver.update_port(m_pc, links)
+        self.driver.client.get.assert_called_once()
+        self.driver.client.edit_config.assert_called_once()
+        # Validate the edit config call
+        edit_call_args_list = self.driver.client.edit_config.call_args_list
+        ifaces = list(edit_call_args_list[0][0][0])
+        if_agg = ifaces[0]
+        assert isinstance(if_agg, interfaces.InterfaceAggregate)
+        self.assertEqual(if_agg.name, 'Po10')
+        self.assertEqual(if_agg.operation, nc_op.MERGE.value)
+        self.assertEqual(False, if_agg.config.enabled)
+
+    def test_delete_pre_configured_aggregate_port_vlan(self):
+        tenant_id = uuidutils.generate_uuid()
+        network_id = uuidutils.generate_uuid()
+        project_id = uuidutils.generate_uuid()
+        m_nc = mock.create_autospec(driver_context.NetworkContext)
+        m_pc = mock.create_autospec(driver_context.PortContext)
+        binding_profile = {
+            constants.LOCAL_LINK_INFO: [
+                {'port_id': 'foo1/1', 'switch_id': 'aa:bb:cc:dd:ee:ff',
+                 'switch_info': 'foo'},
+                {'port_id': 'foo1/2', 'switch_id': 'aa:bb:cc:dd:ee:ff',
+                 'switch_info': 'foo'}],
+            constants.LOCAL_GROUP_INFO: {
+                'id': uuidutils.generate_uuid(),
+                'name': 'PortGroup1',
+                'bond_mode': 'balance-rr',
+            }
+        }
+        m_nc.current = ml2_utils.get_test_network(
+            id=network_id, tenant_id=tenant_id, project_id=project_id,
+            network_type=n_const.TYPE_VLAN, segmentation_id=15)
+        m_nc.original = ml2_utils.get_test_network(
+            id=network_id, tenant_id=tenant_id, project_id=project_id,
+            network_type=n_const.TYPE_VLAN, segmentation_id=15)
+        m_pc.current = ml2_utils.get_test_port(
+            network_id=network_id, tenant_id=tenant_id, project_id=project_id,
+            admin_state_up=False, binding_profile=binding_profile)
+        m_pc.original = ml2_utils.get_test_port(
+            network_id=network_id, tenant_id=tenant_id, project_id=project_id,
+            admin_state_up=True, binding_profile=binding_profile)
+        m_pc.network = m_nc
+        links = m_pc.current['binding:profile'][constants.LOCAL_LINK_INFO]
+        self.driver.client.get.return_value = XML_IFACES_AGGREDATE_ID
+        self.driver.delete_port(m_pc, links)
+        self.driver.client.get.assert_called_once()
+        self.driver.client.edit_config.assert_called_once()
+        # Validate the edit config call
+        edit_call_args_list = self.driver.client.edit_config.call_args_list
+        ifaces = list(edit_call_args_list[0][0][0])
+        if_agg = ifaces[0]
+        assert isinstance(if_agg, interfaces.InterfaceAggregate)
+        self.assertEqual(if_agg.name, 'Po10')
+        self.assertEqual(if_agg.operation, nc_op.MERGE.value)
+        self.assertEqual(False, if_agg.config.enabled)
+        self.assertEqual(if_agg.aggregation.switched_vlan.config.operation,
+                         nc_op.REMOVE.value)

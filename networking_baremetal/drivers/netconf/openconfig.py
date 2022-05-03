@@ -391,7 +391,8 @@ class NetconfOpenConfigClient(base.BaseDeviceClient):
 class NetconfOpenConfigDriver(base.BaseDeviceDriver):
 
     SUPPORTED_BOND_MODES = set().union(constants.NON_SWITCH_BOND_MODES,
-                                       constants.LACP_BOND_MODES)
+                                       constants.LACP_BOND_MODES,
+                                       constants.PRE_CONF_ONLY_BOND_MODES)
 
     def __init__(self, device):
         super().__init__(device)
@@ -635,7 +636,23 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
         :param switched_vlan: switched_vlan OpenConfig object
         :param links: Local link information filtered for the device.
         """
-        pass
+        port = context.current
+        aggregate_ids = self.get_aggregate_ids(links)
+        if not aggregate_ids:
+            raise exceptions.PreConfiguredAggrergateNotFound(
+                links=links, device=self.device)
+        ifaces = interfaces.Interfaces()
+        for aggregate_id in aggregate_ids:
+            iface = ifaces.add(aggregate_id,
+                               interface_type=constants.IFACE_TYPE_AGGREGATE)
+            iface.operation = nc_op.MERGE
+            iface.config.enabled = port['admin_state_up']
+            if switched_vlan is not None:
+                iface.aggregation.switched_vlan = switched_vlan
+            else:
+                del iface.aggregation.switched_vlan
+
+        self.client.edit_config(ifaces)
 
     def update_port(self, context, links):
         """Update port on device
@@ -731,7 +748,19 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
             to the update_port call.
         :param links: Local link information filtered for the device.
         """
-        pass
+        port = context.current
+        aggregate_ids = self.get_aggregate_ids(links)
+        if not aggregate_ids:
+            raise exceptions.PreConfiguredAggrergateNotFound(
+                links=links, device=self.device)
+        ifaces = interfaces.Interfaces()
+        for aggregate_id in aggregate_ids:
+            iface = ifaces.add(aggregate_id,
+                               interface_type=constants.IFACE_TYPE_AGGREGATE)
+            iface.operation = nc_op.MERGE
+            iface.config.enabled = port['admin_state_up']
+
+        self.client.edit_config(ifaces)
 
     def delete_port(self, context, links, current=True):
         """Delete/Un-configure port on device
@@ -837,7 +866,18 @@ class NetconfOpenConfigDriver(base.BaseDeviceDriver):
 
         :param links: Local link information filtered for the device.
         """
-        pass
+        aggregate_ids = self.get_aggregate_ids(links)
+        if not aggregate_ids:
+            raise exceptions.PreConfiguredAggrergateNotFound(
+                links=links, device=self.device)
+        ifaces = interfaces.Interfaces()
+        for aggregate_id in aggregate_ids:
+            iface = ifaces.add(aggregate_id,
+                               interface_type=constants.IFACE_TYPE_AGGREGATE)
+            iface.config.enabled = False
+            iface.aggregation.switched_vlan.config.operation = nc_op.REMOVE
+
+        self.client.edit_config(ifaces)
 
     @staticmethod
     def _uuid_as_hex(_uuid):

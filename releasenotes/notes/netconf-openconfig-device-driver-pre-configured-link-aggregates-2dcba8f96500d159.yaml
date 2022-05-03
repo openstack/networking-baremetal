@@ -1,0 +1,11 @@
+---
+features:
+  - |
+    Added support for *pre-configured* link-aggregates in the
+    ``netconf-openconfig`` device driver. This is useful for the following
+    linux bond modes:
+
+    * balance-rr
+    * balance-xor
+    * broadcast
+
