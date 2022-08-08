@@ -1,0 +1,21 @@
+---
+features:
+  - |
+    `OpenConfig <https://openconfig.net/>`_ YANG data model python bindings.
+
+    Bindings for a subset of the OpenConfig YANG models has been added, these
+    bindings can be used to build a structured configuration that can be
+    serialized and sent to a network device (switch) where it will be parsed
+    and applied. Serialization to XML which can be used with Network
+    Configuration Protocol (NETCONF) has been implemented.
+
+    The bindings is only a small subset of the following YANG models, it
+    implements what is required to provide a good feature-set for BMaaS use
+    case.
+
+    * \http://openconfig.net/yang/interfaces
+    * \http://openconfig.net/yang/interfaces/ethernet
+    * \http://openconfig.net/yang/vlan
+    * \http://openconfig.net/yang/network-instance
+    * \http://openconfig.net/yang/interfaces/aggregate
+    * \http://openconfig.net/yang/lacp
