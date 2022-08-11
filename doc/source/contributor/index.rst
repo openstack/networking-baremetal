@@ -65,6 +65,7 @@ code reviews to an OpenStack project.
 
    Deploying networking-baremetal with DevStack <quickstart>
    Deploying networking-baremetal and multi-tenant networking with DevStack <quickstart-multitenant>
+   Virtual lab with virtual switch and netconf-openconfig Device Driver <quickstart-netconf-openconfig>
 
 Full networking-baremetal python API reference
 ==============================================

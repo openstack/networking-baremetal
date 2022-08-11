@@ -45,6 +45,44 @@ enables the ``openvswitch`` and ``baremetal`` mechanism drivers:
   [ml2]
   mechanism_drivers = openvswitch,baremetal
 
+Add devices (switches) to manage
+--------------------------------
+
+The baremetal mechanism ML2 plug-in provides a device driver plug-in interface.
+If a device driver for the switch model exist the baremetal ML2 plug-in can be
+configured to manage switch configuration, adding tenant VLANs and setting
+switch port VLAN configuration etc.
+
+To add a device to manage, edit the ``/etc/neutron/plugins/ml2/ml2_conf.ini``
+configuration file. The example below enables devices: ``device_a.example.net``
+and ``device_b.example.net``. Both devices in the example is using the
+``netconf-openconfig`` device driver. For each device a separate section in
+configuration defines the device and driver specific configuration.
+
+.. code-block:: ini
+
+  [networking_baremetal]
+  enabled_devices = device_a.example.net,device_b.example.net
+
+  [device_a.example.net]
+  driver = netconf-openconfig
+  switch_info = device_a
+  switch_id = 00:53:00:0a:0a:0a
+  host = device_a.example.net
+  username = user
+  key_filename = /etc/neutron/ssh_keys/device_a_sshkey
+  hostkey_verify = false
+
+  [device_b.example.net]
+  driver = netconf-openconfig
+  switch_info = device_b
+  switch_id = 00:53:00:0b:0b:0b
+  host = device_a.example.net
+  username = user
+  key_filename = /etc/neutron/ssh_keys/device_a_sshkey
+  hostkey_verify = false
+
+
 Configure ironic-neutron-agent
 ------------------------------
 

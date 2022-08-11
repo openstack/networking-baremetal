@@ -31,6 +31,7 @@ from oslo_log import log as logging
 import tenacity
 
 from networking_baremetal import common
+from networking_baremetal import config
 from networking_baremetal import constants
 from networking_baremetal.constants import NetconfEditConfigOperation as nc_op
 from networking_baremetal.drivers import base
@@ -127,6 +128,12 @@ _NCCLIENT_OPTS = [
                 help=('Enables looking in the usual locations for ssh keys '
                       '(e.g. :file:`~/.ssh/id_*`)')),
 ]
+
+
+def list_driver_opts():
+    return [('networking_baremetal', config._opts),
+            ('netconf-openconfig-example',
+             config._device_opts + _DEVICE_OPTS + _NCCLIENT_OPTS)]
 
 
 class NetconfLockDenied(n_exec.NeutronException):
