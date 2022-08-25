@@ -55,7 +55,7 @@ source_suffix = '.rst'
 master_doc = 'index'
 
 # General information about the project.
-copyright = u'2017, The Networking Baremetal team'
+copyright = '2017, The Networking Baremetal team'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -202,8 +202,8 @@ htmlhelp_basename = 'NetworkingBaremetalReleaseNotesdoc'
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
     ('index', 'NetworkingBaremetalReleaseNotes.tex',
-     u'Networking Baremetal Release Notes Documentation',
-     u'Networking Baremetal Developers', 'manual'),
+     'Networking Baremetal Release Notes Documentation',
+     'Networking Baremetal Developers', 'manual'),
 ]
 
 # The name of an image file (relative to this directory) to place at the top of
@@ -233,8 +233,8 @@ latex_documents = [
 # (source start file, name, description, authors, manual section).
 man_pages = [
     ('index', 'networkingbaremetalreleasenotes',
-     u'Networking Baremetal Release Notes Documentation',
-     [u'Networking Baremetal Developers'], 1)
+     'Networking Baremetal Release Notes Documentation',
+     ['Networking Baremetal Developers'], 1)
 ]
 
 # If true, show URL addresses after external links.
@@ -248,8 +248,8 @@ man_pages = [
 #  dir menu entry, description, category)
 texinfo_documents = [
     ('index', 'NetworkingBaremetalReleaseNotes',
-     u'Networking Baremetal Release Notes Documentation',
-     u'networking Baremetal Developers', 'networkingbaremetalreleasenotes',
+     'Networking Baremetal Release Notes Documentation',
+     'networking Baremetal Developers', 'networkingbaremetalreleasenotes',
      'Neutron plugin that provides deep Ironic/Neutron integration.',
      'Miscellaneous'),
 ]

@@ -49,7 +49,7 @@ source_suffix = '.rst'
 master_doc = 'index'
 
 # General information about the project.
-copyright = u'2017, The Networking Baremetal team'
+copyright = '2017, The Networking Baremetal team'
 
 config_generator_config_file = '../../tools/config/networking-baremetal-config-generator.conf'
 sample_config_basename = '_static/ironic_neutron_agent.ini'
@@ -92,8 +92,8 @@ latex_use_xindy = False
 latex_documents = [
     ('index',
      'doc-networking-baremetal.tex',
-     u'Networking Baremetal Documentation',
-     u'OpenStack Foundation', 'manual'),
+     'Networking Baremetal Documentation',
+     'OpenStack Foundation', 'manual'),
 ]
 
 # Example configuration for intersphinx: refer to the Python standard library.
