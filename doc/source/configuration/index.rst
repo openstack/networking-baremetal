@@ -1,12 +1,9 @@
-=======================
-Configuration Reference
-=======================
-
-The following pages describe configuration options that can be used to adjust
-the service to your particular situation.
+=====================
+Configuration Options
+=====================
 
 .. toctree::
-  :maxdepth: 1
+   :maxdepth: 3
 
-  Configuration Options <config>
-  Sample Config File <sample-config>
+   Ironic Neutron agent <ironic-neutron-agent/index>
+   ML2 <ml2/index>

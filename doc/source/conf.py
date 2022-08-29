@@ -51,8 +51,15 @@ master_doc = 'index'
 # General information about the project.
 copyright = '2017, The Networking Baremetal team'
 
-config_generator_config_file = '../../tools/config/networking-baremetal-config-generator.conf'
-sample_config_basename = '_static/ironic_neutron_agent.ini'
+config_generator_config_file = [
+    ('../../tools/config/networking-baremetal-ironic-neutron-agent.conf',
+     '_static/ironic_neutron_agent.ini'),
+    ('../../tools/config/networking-baremetal-common-device-driver-opts.conf',
+     '_static/common_device_driver_opts'),
+    ('../../tools/config/networking-baremetal-netconf-openconfig-driver-opts.conf',
+     '_static/netconf_openconfig_device_driver')
+]
+# sample_config_basename = '_static/ironic_neutron_agent.ini'
 
 # A list of ignored prefixes for module index sorting.
 modindex_common_prefix = ['networking_baremetal.']
