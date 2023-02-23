@@ -47,6 +47,7 @@
         SWIFT_TEMPURL_KEY: secretkey
         TENANT_VLAN_RANGE: 100:150
         EBTABLES_RACE_FIX: True
+        NEUTRON_PORT_SECURITY: False
       devstack_services:
         s-account: True
         s-container: True
