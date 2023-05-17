@@ -9,5 +9,5 @@ with Bare Metal service.
 * Free software: Apache license
 * Documentation: http://docs.openstack.org/networking-baremetal/latest
 * Source: http://opendev.org/openstack/networking-baremetal
-* Bugs: https://storyboard.openstack.org/#!/project/955
+* Bugs: https://bugs.launchpad.net/networking-baremetal
 * Release notes: https://docs.openstack.org/releasenotes/networking-baremetal/

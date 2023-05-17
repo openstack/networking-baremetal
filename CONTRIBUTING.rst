@@ -12,6 +12,6 @@ submitted for review via the Gerrit tool:
 
 Pull requests submitted through GitHub will be ignored.
 
-Bugs should be filed in StoryBoard, not GitHub:
+Bugs should be filed in Launchpad, not GitHub:
 
-   https://storyboard.openstack.org/#!/project/955
+   https://bugs.launchpad.net/networking-baremetal

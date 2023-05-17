@@ -49,7 +49,7 @@ source_suffix = '.rst'
 master_doc = 'index'
 
 # General information about the project.
-copyright = '2017, The Networking Baremetal team'
+copyright = 'OpenStack Foundation'
 
 config_generator_config_file = [
     ('../../tools/config/networking-baremetal-ironic-neutron-agent.conf',
@@ -86,7 +86,7 @@ html_theme = 'openstackdocs'
 # openstackdocstheme options
 openstackdocs_repo_name = 'openstack/networking-baremetal'
 openstackdocs_pdf_link = True
-openstackdocs_use_storyboard = True
+openstackdocs_use_storyboard = False
 
 # Output file base name for HTML help builder.
 htmlhelp_basename = 'networking-baremetaldoc'
