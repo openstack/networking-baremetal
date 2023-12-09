@@ -1,0 +1,6 @@
+---
+fixes:
+  - |
+    Fixes an issue when networking-baremetal try
+    to bind port that should be handled by other ml2
+    driver like networking-generic-switch.

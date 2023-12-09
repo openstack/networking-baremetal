@@ -487,6 +487,12 @@ class BaremetalMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
 
             by_device[device]['links'].append(link)
 
+        if not by_device:
+            # NOTE(vsaienko): we can call set_binding ONLY when we complete
+            # binding for the port in the segment. We do not handle the port
+            # and want to let other drivers to bind it.
+            return False
+
         # Check driver(s) support the bond_mode - if not fail port binding
         if (bond_mode and by_device
                 and not self._is_bond_mode_supported(bond_mode, by_device)):

@@ -72,15 +72,6 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
                          self.driver.supported_vnic_types)
         self.assertEqual(portbindings.VIF_TYPE_OTHER, self.driver.vif_type)
 
-    @mock.patch.object(provisioning_blocks, 'add_provisioning_component',
-                       autospec=True)
-    def test_bind_port(self, mpb_pc):
-        port_context = self._make_port_ctx(self.AGENTS)
-        port_context._plugin_context = 'plugin_context'
-        self.assertIsNone(port_context._bound_vif_type)
-        self.driver.bind_port(port_context)
-        self.assertEqual(port_context._bound_vif_type, self.driver.vif_type)
-
     def test_get_allowed_network_types(self):
         agent_mock = mock.Mock()
         allowed_network_types = self.driver.get_allowed_network_types(
@@ -447,7 +438,8 @@ class TestBaremetalMechDriverFakeDriver(base.AgentMechanismBaseTestCase):
         self.driver.bind_port(context)
         self.mock_manager.assert_not_called()
         self.mock_driver.create_port.assert_not_called()
-        self.assertEqual(context._bound_vif_type, self.driver.vif_type)
+        self.assertIsNone(context._bound_vif_type)
+        mock_p_blocks.assert_not_called()
 
     @mock.patch.object(provisioning_blocks, 'add_provisioning_component',
                        autospec=True)
