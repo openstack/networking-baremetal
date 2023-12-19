@@ -50,7 +50,9 @@ def list_opts():
 
 def _get_notification_transport_url():
     url = urlparse.urlparse(CONF.transport_url)
-    if CONF.oslo_messaging_rabbit.amqp_auto_delete is False:
+    if (CONF.oslo_messaging_rabbit.amqp_auto_delete is False
+            and not getattr(CONF.oslo_messaging_rabbit, 'rabbit_quorum_queue',
+                            None)):
         q = urlparse.parse_qs(url.query)
         q.update({'amqp_auto_delete': ['true']})
         query = urlparse.urlencode({k: v[0] for k, v in q.items()})
