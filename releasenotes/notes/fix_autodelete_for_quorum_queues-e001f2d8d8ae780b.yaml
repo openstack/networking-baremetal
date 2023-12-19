@@ -1,0 +1,6 @@
+---
+fixes:
+  - |
+    Fixes a bug which tried to force delete queues when quorum queues are enabled.
+    Quorum queues do not support the auto-delete feature.
+    See the `bugreport 2046962  <https://bugs.launchpad.net/networking-baremetal/+bug/2046962>`_  for details.
