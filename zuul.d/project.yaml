@@ -7,6 +7,8 @@
     check:
       jobs:
         - networking-baremetal-multitenant-vlans
+        - networking-baremetal-tox-codespell:
+            voting: false
     gate:
       jobs:
         - networking-baremetal-multitenant-vlans

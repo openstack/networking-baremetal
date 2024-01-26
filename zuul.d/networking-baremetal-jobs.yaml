@@ -69,3 +69,9 @@
         q-metering: True
         q-svc: True
 
+- job:
+    name: networking-baremetal-tox-codespell
+    parent: openstack-tox
+    timeout: 7200
+    vars:
+      tox_envlist: codespell
