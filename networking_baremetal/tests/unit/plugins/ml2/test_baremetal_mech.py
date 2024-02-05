@@ -329,7 +329,7 @@ class TestBaremetalMechDriverFakeDriver(base.AgentMechanismBaseTestCase):
         self.mock_manager.assert_not_called()
         self.mock_driver.assert_not_called()
 
-        # Whith physical network
+        # With physical network
         self.mock_manager.reset_mock()
         self.mock_driver.reset_mock()
         m_nc.current = ml2_utils.get_test_network(
