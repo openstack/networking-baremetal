@@ -344,7 +344,7 @@ class NetconfOpenConfigClient(base.BaseDeviceClient):
 
     @staticmethod
     def allocate_deferred(aggregate_id, config):
-        """Set aggregation id where it was deffered
+        """Set aggregation id where it was deferred
 
         :param aggregate_id: Aggregation ID for the link aggregate,
             for example 'po123'

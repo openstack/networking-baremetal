@@ -190,7 +190,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
                  'host': self.agent_host,
                  'timestamp': timeutils.utcnow_ts()})
         except Exception:
-            LOG.exception('Failed to send hash ring membership hearbeat!')
+            LOG.exception('Failed to send hash ring membership heartbeat!')
 
     def get_template_node_state(self, node_uuid):
         return {
