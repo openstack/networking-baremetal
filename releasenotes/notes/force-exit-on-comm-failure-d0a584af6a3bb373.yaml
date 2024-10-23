@@ -1,0 +1,10 @@
+---
+fixes:
+  - |
+    Fixes cases where the ``ironic-neturon-agent`` could enter a state where
+    it is no longer operating properly by forcing the agent to exit when
+    "hard" communication failures occur which cannot be retried automatically.
+    This allows the service runner to understand a failure has occured and
+    to restart the agent. The process exit is self-triggered by the agent
+    through the use of the SIGABRT signal to indicate non-normal process
+    termination.

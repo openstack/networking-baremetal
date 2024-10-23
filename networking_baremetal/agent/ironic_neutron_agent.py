@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import os
 import socket
 import sys
 from urllib import parse as urlparse
@@ -162,7 +163,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
         self.heartbeat.start(interval=CONF.AGENT.report_interval,
                              initial_delay=CONF.AGENT.report_interval)
 
-    def stop(self):
+    def stop(self, failure=False):
         LOG.info('Stopping agent networking-baremetal.')
         self.heartbeat.stop()
         self.notify_agents.stop()
@@ -170,6 +171,11 @@ class BaremetalNeutronAgent(service.ServiceBase):
         self.pool_listener.stop()
         self.listener.wait()
         self.pool_listener.wait()
+        if failure:
+            # This will generate a SIGABORT for the process which forces it
+            # to exit, which seems cleaner to force the process to exit
+            # than os.exit and avoids threading constraints.
+            os.abort()
 
     def reset(self):
         LOG.info('Resetting agent networking-baremetal.')
@@ -209,6 +215,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
     def _report_state(self):
         node_states = {}
         ironic_ports = self.ironic_client.ports(details=True)
+
         # NOTE: the above calls returns a generator, so we need to handle
         # exceptions that happen just before the first loop iteration, when
         # the actual request to ironic happens
@@ -227,11 +234,20 @@ class BaremetalNeutronAgent(service.ServiceBase):
         except sdk_exc.OpenStackCloudException:
             LOG.exception("Failed to get ironic ports data! "
                           "Not reporting state.")
+            try:
+                # Replace the client, just to be on the safe side in
+                # the event there was some sort of hard/breaking failure.
+                self.ironic_client = ironic_client.get_client()
+            except Exception:
+                # Failed to re-launch a new client, aborting.
+                self.stop(failure=True)
             return
-
+        abort_operation = False
         for state in node_states.values():
             # If the node was not previously reported with current
             # configuration set the start_flag True.
+            # NOTE(TheJulia) reported_nodes is an internal list of nodes
+            # we *have* updated.
             if not state['configurations'] == self.reported_nodes.get(
                     state['host']):
                 state.update({'start_flag': True})
@@ -246,15 +262,19 @@ class BaremetalNeutronAgent(service.ServiceBase):
                 # This means the server does not support report_state
                 LOG.exception("Neutron server does not support state report. "
                               "State report for this agent will be disabled.")
-                self.heartbeat.stop()
                 # Don't continue reporting the remaining agents in this case.
-                return
+                abort_operation = True
+                break
             except Exception:
                 LOG.exception("Failed reporting state!")
                 # Don't continue reporting the remaining nodes if one failed.
                 return
             self.reported_nodes.update(
                 {state['host']: state['configurations']})
+        if abort_operation:
+            # We don't expect the agent to work, and as such we should call
+            # stop so the program unwinds and begins to exit.
+            self.stop(failure=True)
 
 
 def _unregiser_deprecated_opts():
