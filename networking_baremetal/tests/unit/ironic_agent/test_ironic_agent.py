@@ -257,8 +257,10 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                 [mock.call(self.agent.context, expected1),
                  mock.call(self.agent.context, expected2)], any_order=True)
 
+    @mock.patch.object(ironic_client, 'get_client', autospec=True)
     @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
-    def test_ironic_port_list_fail(self, mock_log, mock_conn, mock_ir_client):
+    def test_ironic_port_list_fail(self, mock_log, mock_get_client,
+                                   mock_conn, mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         self.agent.ironic_client = mock_conn
 
@@ -269,6 +271,33 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         mock_conn.ports.side_effect = mock_generator
         self.agent._report_state()
         self.assertEqual(1, mock_log.call_count)
+        # Test initalization triggers the client call once
+        # before _report_state is triggered, hence call
+        # count below of 2.
+        self.assertEqual(2, mock_get_client.call_count)
+
+    @mock.patch.object(ironic_neutron_agent.BaremetalNeutronAgent, 'stop',
+                       autospec=True)
+    @mock.patch.object(ironic_client, 'get_client', autospec=True)
+    @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
+    def test_ironic_port_list_fail_breakage(self, mock_log, mock_get_client,
+                                            mock_stop, mock_conn,
+                                            mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        self.agent.ironic_client = mock_conn
+        mock_get_client.side_effect = Exception
+
+        def mock_generator(details=None):
+            raise sdk_exc.OpenStackCloudException()
+            yield
+
+        mock_conn.ports.side_effect = mock_generator
+        self.agent._report_state()
+        self.assertEqual(1, mock_log.call_count)
+        # Checking the count on stop to see if it is called, as
+        # opposed to the get_client method as it is the exception
+        # root cause.
+        mock_stop.assert_called_once_with(mock.ANY, failure=True)
 
     @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
     @mock.patch.object(agent_rpc, 'PluginReportStateAPI', autospec=True)
@@ -285,6 +314,27 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         mock_report_state.report_state.side_effect = Exception()
         self.agent._report_state()
         self.assertEqual(1, mock_log.call_count)
+
+    @mock.patch.object(ironic_neutron_agent.BaremetalNeutronAgent, 'stop',
+                       autospec=True)
+    @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
+    @mock.patch.object(agent_rpc, 'PluginReportStateAPI', autospec=True)
+    def test_state_rpc_report_state_fail_attribute(self, mock_report_state,
+                                                   mock_log, mock_stop,
+                                                   mock_conn,
+                                                   mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        self.agent.agent_id = 'agent_id'
+        self.agent.member_manager.hashring = hashring.HashRing(
+            [self.agent.agent_id])
+
+        self.agent.ironic_client = mock_conn
+        self.agent.state_rpc = mock_report_state
+        mock_conn.ports.return_value = iter([FakePort1(), FakePort2()])
+        mock_report_state.report_state.side_effect = AttributeError()
+        self.agent._report_state()
+        self.assertEqual(1, mock_log.call_count)
+        mock_stop.assert_called_once_with(mock.ANY, failure=True)
 
     def test__get_notification_transport_url(self, mock_conn, mock_ir_client):
         self.assertEqual(
