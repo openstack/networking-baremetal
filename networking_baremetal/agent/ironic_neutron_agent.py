@@ -126,6 +126,8 @@ class BaremetalNeutronAgent(service.ServiceBase):
         self.context = context.get_admin_context_without_session()
         self.agent_id = uuidutils.generate_uuid(dashed=True)
         self.agent_host = socket.gethostname()
+        self.heartbeat = None
+        self.notify_agents = None
 
         # Set up oslo_messaging notifier and listener to keep track of other
         # members
@@ -165,8 +167,10 @@ class BaremetalNeutronAgent(service.ServiceBase):
 
     def stop(self, failure=False):
         LOG.info('Stopping agent networking-baremetal.')
-        self.heartbeat.stop()
-        self.notify_agents.stop()
+        if self.heartbeat:
+            self.heartbeat.stop()
+        if self.notify_agents:
+            self.notify_agents.stop()
         self.listener.stop()
         self.pool_listener.stop()
         self.listener.wait()
@@ -179,8 +183,10 @@ class BaremetalNeutronAgent(service.ServiceBase):
 
     def reset(self):
         LOG.info('Resetting agent networking-baremetal.')
-        self.heartbeat.stop()
-        self.notify_agents.stop()
+        if self.heartbeat:
+            self.heartbeat.stop()
+        if self.notify_agents:
+            self.notify_agents.stop()
         self.listener.stop()
         self.pool_listener.stop()
         self.listener.wait()
