@@ -1,0 +1,8 @@
+---
+fixes:
+  - |
+    Clean up orphan baremetal agents which are left after Ironic's
+    node was deleted. Removes all agents without related node at
+    service start up and when node is not found in port list but
+    was reported before. See `bug:
+    2086640 <https://bugs.launchpad.net/networking-baremetal/+bug/2086640>`_.

@@ -161,6 +161,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
             self._report_state)
         self.heartbeat.start(interval=CONF.AGENT.report_interval,
                              initial_delay=CONF.AGENT.report_interval)
+        self.cleanup_stale_agents()
 
     def stop(self, failure=False):
         LOG.info('Stopping agent networking-baremetal.')
@@ -213,7 +214,8 @@ class BaremetalNeutronAgent(service.ServiceBase):
                 'log_agent_heartbeats': CONF.AGENT.log_agent_heartbeats,
             },
             'start_flag': False,
-            'agent_type': constants.BAREMETAL_AGENT_TYPE}
+            'agent_type': constants.BAREMETAL_AGENT_TYPE,
+            'action': 'update'}
 
     def _report_state(self):
         node_states = {}
@@ -274,10 +276,102 @@ class BaremetalNeutronAgent(service.ServiceBase):
                 return
             self.reported_nodes.update(
                 {state['host']: state['configurations']})
+
+        # Identify nodes that are no longer present in Ironic by subtracting
+        # the keys of `node_states` from the keys of `reported_nodes`. Then
+        # delete agents for nodes that are no longer present.
+        deleted_nodes = self.reported_nodes.keys() - node_states.keys()
+        deleted_agents = self._delete_agents(deleted_nodes)
+        for node in deleted_agents:
+            self.reported_nodes.pop(node)
+
         if abort_operation:
             # We don't expect the agent to work, and as such we should call
             # stop so the program unwinds and begins to exit.
             self.stop(failure=True)
+
+    def _get_down_agents(self):
+        """Retrieves a list of inactive Baremetal agents.
+
+        Fetch a list of inactive Baremetal agents. It interacts with
+        the state_rpc object to call the 'get_agents' method, which
+        retrieves agents based on the provided parameters.
+
+        :returns: (list) Inactive Baremetal agents.
+        """
+        down_bm_agents = []
+        try:
+            down_bm_agents = self.state_rpc.get_agents(
+                self.context,
+                agent_type=constants.BAREMETAL_AGENT_TYPE,
+                is_active=False)
+        except oslo_messaging.NoSuchMethod:
+            LOG.warning("Neutron server doesn't support "
+                        "`get_agents` endpoint.")
+
+        return down_bm_agents
+
+    def _get_nodes_not_found(self, down_bm_agents):
+        """Identifies nodes that are not found in the Ironic
+
+        The method iterates over each agent in the 'down_bm_agents' list.
+        For each agent, it attempts to retrieve the corresponding node using
+        the Ironic client's 'get_node' method. If the node is not found the
+        node is appended to the 'nodes_not_found' list.
+
+        :param down_bm_agents: (list) Agents that are down in Neutron.
+        :return: (list) Nodes that are not found in Ironic.
+        """
+        nodes_not_found = []
+        for agent in down_bm_agents:
+            node = agent['host']
+            try:
+                self.ironic_client.get_node(node)
+            except sdk_exc.NotFoundException:
+                nodes_not_found.append(node)
+
+        return nodes_not_found
+
+    def _delete_agents(self, nodes, log=True):
+        """Delete agents for nodes that are not found in ironic
+
+        Clean up agent records in neutron for ironic nodes that have been
+        removed from the system.
+
+        :param nodes_not_found: (list) Nodes that are not found in Ironic.
+        :log: (bool) Log the actions taken.
+        :return: (list) Agents that have been deleted in Neutron.
+        """
+        deleted_agents = []
+        for node in nodes:
+            if log:
+                LOG.info('Removing agent for host: %s', node)
+            try:
+                kwargs = {'host': node,
+                          'agent_type': constants.BAREMETAL_AGENT_TYPE}
+                self.state_rpc.delete_agent(self.context, **kwargs)
+                deleted_agents.append(node)
+            except oslo_messaging.NoSuchMethod:
+                LOG.warning("Neutron server doesn't support "
+                            "`delete_agent` endpoint.")
+                break
+
+        return deleted_agents
+
+    def cleanup_stale_agents(self):
+        """Cleans up stale baremetal agents
+
+        This method identifies baremetal agents that are marked as
+        inactive in the Neutron server and are not associated with
+        any nodes in Ironic. It then deletes these stale agents.
+        """
+        down_bm_agents = self._get_down_agents()
+        nodes_not_found = self._get_nodes_not_found(down_bm_agents)
+        deleted_agents = self._delete_agents(nodes_not_found, log=False)
+
+        if deleted_agents:
+            LOG.info("Stale baremetal agent for hosts was removed: %s",
+                     ", ".join(deleted_agents))
 
 
 def _unregiser_deprecated_opts():

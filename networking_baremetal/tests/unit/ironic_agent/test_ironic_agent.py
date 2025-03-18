@@ -96,7 +96,8 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                     },
                     'log_agent_heartbeats': False,
                 },
-                'agent_type': constants.BAREMETAL_AGENT_TYPE
+                'agent_type': constants.BAREMETAL_AGENT_TYPE,
+                'action': 'update'
             }
             self.agent._report_state()
             mock_report_state.assert_called_with(self.agent.context, expected)
@@ -124,7 +125,8 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                     },
                     'log_agent_heartbeats': True,
                 },
-                'agent_type': constants.BAREMETAL_AGENT_TYPE
+                'agent_type': constants.BAREMETAL_AGENT_TYPE,
+                'action': 'update'
             }
 
             self.agent._report_state()
@@ -152,7 +154,8 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                     },
                     'log_agent_heartbeats': False,
                 },
-                'agent_type': constants.BAREMETAL_AGENT_TYPE
+                'agent_type': constants.BAREMETAL_AGENT_TYPE,
+                'action': 'update'
             }
 
             # First time report start_flag is True
@@ -187,7 +190,8 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                     },
                     'log_agent_heartbeats': False,
                 },
-                'agent_type': constants.BAREMETAL_AGENT_TYPE
+                'agent_type': constants.BAREMETAL_AGENT_TYPE,
+                'action': 'update'
             }
 
             # First time report start_flag is True
@@ -236,7 +240,8 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                     },
                     'log_agent_heartbeats': False,
                 },
-                'agent_type': constants.BAREMETAL_AGENT_TYPE
+                'agent_type': constants.BAREMETAL_AGENT_TYPE,
+                'action': 'update'
             }
             expected2 = {
                 'topic': n_const.L2_AGENT_TOPIC,
@@ -249,13 +254,53 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                     },
                     'log_agent_heartbeats': False,
                 },
-                'agent_type': constants.BAREMETAL_AGENT_TYPE
+                'agent_type': constants.BAREMETAL_AGENT_TYPE,
+                'action': 'update'
             }
 
             self.agent._report_state()
             mock_report_state.assert_has_calls(
                 [mock.call(self.agent.context, expected1),
                  mock.call(self.agent.context, expected2)], any_order=True)
+
+    def test_report_state_deleted_node(self, mock_conn, mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        with (mock.patch.object(self.agent.state_rpc, 'report_state',
+                                autospec=True) as mock_report_state,
+              mock.patch.object(self.agent.state_rpc, 'delete_agent',
+                                autospec=True) as mock_delete_agent):
+            self.agent.ironic_client = mock_conn
+            mock_conn.ports.return_value = iter([FakePort1()])
+            self.agent.agent_id = 'agent_id'
+            self.agent.member_manager.hashring = hashring.HashRing(
+                [self.agent.agent_id])
+
+            expected1 = {
+                'topic': n_const.L2_AGENT_TOPIC,
+                'start_flag': True,
+                'binary': constants.BAREMETAL_BINARY,
+                'host': '55555555-4444-3333-2222-111111111111',
+                'configurations': {
+                    'bridge_mappings': {
+                        'physnet1': 'yes'
+                    },
+                    'log_agent_heartbeats': False,
+                },
+                'agent_type': constants.BAREMETAL_AGENT_TYPE,
+                'action': 'update'
+            }
+
+            self.agent.reported_nodes = {
+                '55555555-4444-3333-2222-111111111111': {},
+                '55555555-4444-3333-aaaa-111111111111': {}}
+            self.agent._report_state()
+            mock_report_state.assert_has_calls(
+                [mock.call(self.agent.context, expected1)], any_order=True)
+            mock_delete_agent.assert_has_calls(
+                [mock.call(self.agent.context,
+                           host='55555555-4444-3333-aaaa-111111111111',
+                           agent_type=constants.BAREMETAL_AGENT_TYPE)],
+                any_order=True)
 
     @mock.patch.object(ironic_client, 'get_client', autospec=True)
     @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
@@ -383,3 +428,66 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         self.assertEqual(
             'rabbit://user:password@host/',
             ironic_neutron_agent._get_notification_transport_url())
+
+    def test__get_down_agents(self, mock_conn, mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+
+        with mock.patch.object(self.agent.state_rpc, 'get_agents',
+                               return_value=[], autospec=True):
+            self.assertEqual([], self.agent._get_down_agents())
+
+        with mock.patch.object(self.agent.state_rpc, 'get_agents',
+                               return_value=[{'host': 'deleted_host'}],
+                               autospec=True):
+            self.assertEqual(
+                [{'host': 'deleted_host'}], self.agent._get_down_agents())
+
+    def test__get_nodes_not_found(self, mock_conn, mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        self.agent.ironic_client = mock_conn
+
+        down_agents = [{'host': 'deleted_host'},
+                       {'host': 'existing_host'}]
+        expected = ['deleted_host']
+        mock_conn.get_node.side_effect = [
+            sdk_exc.NotFoundException(), mock.Mock()]
+        self.assertEqual(expected,
+                         self.agent._get_nodes_not_found(down_agents))
+
+    def test__delete_agents(self, mock_conn, mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        self.agent.agent_id = 'agent_id'
+        self.agent.member_manager.hashring = hashring.HashRing(
+            [self.agent.agent_id])
+
+        nodes_not_found = ['host0', 'host1']
+        calls = [
+            mock.call(self.agent.context,
+                      host=nodes_not_found[0],
+                      agent_type=constants.BAREMETAL_AGENT_TYPE),
+            mock.call(self.agent.context,
+                      host=nodes_not_found[1],
+                      agent_type=constants.BAREMETAL_AGENT_TYPE)
+        ]
+        with mock.patch.object(self.agent.state_rpc, 'delete_agent',
+                               autospec=True) as mock_delete_agent:
+            self.agent._delete_agents(nodes_not_found)
+            mock_delete_agent.assert_has_calls(calls, any_order=True)
+
+    def test_cleanup_stale_agents(self, mock_conn, mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        with (mock.patch.object(self.agent.state_rpc, 'delete_agent',
+                                autospec=True) as mock_delete_agent,
+              mock.patch.object(self.agent.state_rpc, 'get_agents',
+                                return_value=[{'host': 'deleted_host'}],
+                                autospec=True)):
+            self.agent.ironic_client = mock_conn
+            mock_conn.get_node.side_effect = sdk_exc.NotFoundException()
+            self.agent.agent_id = 'agent_id'
+            self.agent.member_manager.hashring = hashring.HashRing(
+                [self.agent.agent_id])
+
+            self.agent.cleanup_stale_agents()
+            kwargs = {'host': 'deleted_host',
+                      'agent_type': constants.BAREMETAL_AGENT_TYPE}
+            mock_delete_agent.assert_called_with(self.agent.context, **kwargs)
