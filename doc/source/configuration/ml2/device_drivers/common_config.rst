@@ -2,10 +2,10 @@
 Common configuration options for all device drivers
 ===================================================
 
-This page describes configuration options that is common to all networking-
-baremetal device drivers. Individual drivers may have independent configuration
-requirements depending on the implementation, refer to the device driver
-specific documentation.
+This page describes configuration options that is common to all
+networking-baremetal device drivers. Individual drivers may have independent
+configuration requirements depending on the implementation, refer to the device
+driver specific documentation.
 
 Configuration options
 ^^^^^^^^^^^^^^^^^^^^^
