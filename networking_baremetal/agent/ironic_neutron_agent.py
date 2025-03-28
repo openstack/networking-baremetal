@@ -90,7 +90,7 @@ class HashRingMemberManagerNotificationEndpoint(object):
 
         timestamp = timeutils.utcnow_ts()
         # Add members or update timestamp for existing members
-        if not payload['id'] in [x['id'] for x in self.members]:
+        if payload['id'] not in [x['id'] for x in self.members]:
             try:
                 LOG.info('Adding member id %s on host %s to hashring.',
                          payload['id'], payload['host'])
