@@ -1,3 +1,33 @@
 [build-system]
 requires = ["pbr>=6.0.0", "setuptools>=64.0.0"]
 build-backend = "pbr.build"
+
+[tool.doc8]
+ignore = ["D001"]
+
+[tool.ruff]
+line-length = 79
+target-version = "py37"
+
+[tool.ruff.lint]
+select = [
+    "E",        # pycodestyle (error)
+    "F",        # pyflakes
+    "G",        # flake8-logging-format
+    "LOG",      # flake8-logging
+    "S",        # flake8-bandit
+]
+
+[tool.ruff.lint.per-file-ignores]
+"networking_baremetal/agent/ironic_neutron_agent.py" = [
+    "E402",   # we need to monkey patch before import
+]
+
+"networking_baremetal/drivers/netconf/openconfig.py" = [
+    "S311",   # we don't need a secure random choice here
+    "S314",   # keep using xml since that's been in use
+]
+
+"networking_baremetal/tests/unit/drivers/netconf/test_openconfig.py" = [
+    "S101",   # test uses assert
+]

@@ -1,0 +1,4 @@
+---
+other:
+  - |
+    Add support for using pre-commit to run checks more easily for contributors.
