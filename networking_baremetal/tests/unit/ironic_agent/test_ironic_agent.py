@@ -271,7 +271,7 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         mock_conn.ports.side_effect = mock_generator
         self.agent._report_state()
         self.assertEqual(1, mock_log.call_count)
-        # Test initalization triggers the client call once
+        # Test initialization triggers the client call once
         # before _report_state is triggered, hence call
         # count below of 2.
         self.assertEqual(2, mock_get_client.call_count)
