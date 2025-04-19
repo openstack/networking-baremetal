@@ -41,3 +41,6 @@ ChangeLog
 
 # Vagrant
 .vagrant
+
+# Sample config file
+*.ini.sample
