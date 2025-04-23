@@ -18,9 +18,6 @@ import socket
 import sys
 from urllib import parse as urlparse
 
-import eventlet
-# oslo_messaging/notify/listener.py documents that monkeypatching is required
-eventlet.monkey_patch()
 from neutron.agent import rpc as agent_rpc
 from neutron.common import config as common_config
 from neutron.conf.agent import common as agent_config
@@ -74,7 +71,7 @@ def _set_up_listener(transport, agent_id):
         oslo_messaging.Target(topic='ironic-neutron-agent-member-manager')]
     endpoints = [HashRingMemberManagerNotificationEndpoint()]
     return oslo_messaging.get_notification_listener(
-        transport, targets, endpoints, executor='eventlet', pool=agent_id)
+        transport, targets, endpoints, pool=agent_id)
 
 
 class HashRingMemberManagerNotificationEndpoint(object):
