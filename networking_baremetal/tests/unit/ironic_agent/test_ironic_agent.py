@@ -309,7 +309,7 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         self.agent.ironic_client = mock_conn
 
-        def mock_generator(details=None):
+        def mock_generator(details=None, conductor_groups=None):
             raise sdk_exc.OpenStackCloudException()
             yield
 
@@ -332,7 +332,7 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         self.agent.ironic_client = mock_conn
         mock_get_client.side_effect = Exception
 
-        def mock_generator(details=None):
+        def mock_generator(details=None, conductor_groups=None):
             raise sdk_exc.OpenStackCloudException()
             yield
 
@@ -491,3 +491,55 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
             kwargs = {'host': 'deleted_host',
                       'agent_type': constants.BAREMETAL_AGENT_TYPE}
             mock_delete_agent.assert_called_with(self.agent.context, **kwargs)
+
+    def test_report_state_with_conductor_groups(self, mock_conn,
+                                                mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        with mock.patch.object(self.agent.state_rpc, 'report_state',
+                               autospec=True):
+            self.conf.config(conductor_groups=['group1', 'group2'],
+                             group='conductor_groups')
+            self.agent.ironic_client = mock_conn
+            mock_conn.ports.return_value = iter([FakePort1()])
+            self.agent.agent_id = 'agent_id'
+            self.agent.member_manager.hashring = hashring.HashRing(
+                [self.agent.agent_id])
+
+            self.agent._report_state()
+            # Verify conductor_groups parameter was passed correctly
+            mock_conn.ports.assert_called_once_with(
+                details=True, conductor_groups=['group1', 'group2'])
+
+    def test_report_state_with_empty_conductor_groups(self, mock_conn,
+                                                      mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        with mock.patch.object(self.agent.state_rpc, 'report_state',
+                               autospec=True):
+            self.conf.config(conductor_groups=[], group='conductor_groups')
+            self.agent.ironic_client = mock_conn
+            mock_conn.ports.return_value = iter([FakePort1()])
+            self.agent.agent_id = 'agent_id'
+            self.agent.member_manager.hashring = hashring.HashRing(
+                [self.agent.agent_id])
+
+            self.agent._report_state()
+            # Verify empty list is passed (should query all ports)
+            mock_conn.ports.assert_called_once_with(
+                details=True, conductor_groups=[])
+
+    def test_report_state_without_conductor_groups_config(self, mock_conn,
+                                                          mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        with mock.patch.object(self.agent.state_rpc, 'report_state',
+                               autospec=True):
+            # Don't set conductor_groups config
+            self.agent.ironic_client = mock_conn
+            mock_conn.ports.return_value = iter([FakePort1()])
+            self.agent.agent_id = 'agent_id'
+            self.agent.member_manager.hashring = hashring.HashRing(
+                [self.agent.agent_id])
+
+            self.agent._report_state()
+            # Verify empty list is passed when config is not set
+            mock_conn.ports.assert_called_once_with(
+                details=True, conductor_groups=[])
