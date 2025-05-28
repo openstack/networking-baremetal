@@ -56,18 +56,12 @@
         generic_switch: True
         networking_baremetal: True
         ir-neutronagt: True
-        neutron-api: False
-        neutron-agent: False
-        neutron-dhcp: False
-        neutron-l3: False
-        neutron-metadata-agent: False
-        neutron-metering: False
-        q-agt: True
-        q-dhcp: True
-        q-l3: True
-        q-meta: True
-        q-metering: True
-        q-svc: True
+        neutron-api: True
+        neutron-agent: True
+        neutron-dhcp: True
+        neutron-l3: True
+        neutron-metadata-agent: True
+        neutron-metering: True
 
 - job:
     name: networking-baremetal-tox-codespell
