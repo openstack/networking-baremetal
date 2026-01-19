@@ -42,6 +42,7 @@ ironic-neutron-agent = "networking_baremetal.agent.ironic_neutron_agent:main"
 
 [project.entry-points."neutron.ml2.mechanism_drivers"]
 baremetal = "networking_baremetal.plugins.ml2.baremetal_mech:BaremetalMechanismDriver"
+baremetal-l2vni = "networking_baremetal.plugins.ml2.baremetal_l2vni_mapping:L2vniMechanismDriver"
 
 [project.entry-points."networking_baremetal.drivers"]
 netconf-openconfig = "networking_baremetal.drivers.netconf.openconfig:NetconfOpenConfigDriver"
