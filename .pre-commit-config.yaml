@@ -1,7 +1,7 @@
 ---
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: mixed-line-ending
@@ -19,12 +19,12 @@ repos:
         files: .*\.(yaml|yml)$
         exclude: releasenotes/.*$
   - repo: https://github.com/Lucas-C/pre-commit-hooks
-    rev: v1.5.4
+    rev: v1.5.5
     hooks:
       - id: remove-tabs
         exclude: '.*\.(svg)$'
   - repo: https://opendev.org/openstack/hacking
-    rev: 7.0.0
+    rev: 8.0.0
     hooks:
       - id: hacking
         additional_dependencies: []
@@ -41,7 +41,7 @@ repos:
         args: [--enable=default-role]
         files: ^doc/|releasenotes|api-ref
   - repo: https://opendev.org/openstack/bashate
-    rev: 2.1.0
+    rev: 2.1.1
     hooks:
       - id: bashate
         args: ["-iE006,E044", "-eE005,E042"]
@@ -51,11 +51,11 @@ repos:
         language: python
         types: [shell]
   - repo: https://github.com/PyCQA/doc8
-    rev: v1.1.2
+    rev: v2.0.0
     hooks:
       - id: doc8
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.7.3
+    rev: v0.14.6
     hooks:
       - id: ruff
         args: ['--fix', '--unsafe-fixes']
