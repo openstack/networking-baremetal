@@ -10,3 +10,4 @@ the ``ironic-neutron-agent`` service to your particular situation.
 
   Configuration Options <config>
   Sample Config File <sample-config>
+  L2VNI Trunk Reconciliation <l2vni-trunk-reconciliation>

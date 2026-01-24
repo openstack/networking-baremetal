@@ -14,13 +14,19 @@
 #    under the License.
 
 import os
+import random
 import socket
 import sys
+import threading
 from urllib import parse as urlparse
 
 from neutron.agent import rpc as agent_rpc
 from neutron.common import config as common_config
-from neutron.conf.agent import common as agent_config
+from neutron.conf.agent import common as neutron_agent_config
+try:
+    from neutron.conf.plugins.ml2.drivers.ovn import ovn_conf
+except ImportError:
+    ovn_conf = None
 from neutron_lib.agent import topics
 from neutron_lib import constants as n_const
 from neutron_lib import context
@@ -34,8 +40,12 @@ from oslo_utils import timeutils
 from oslo_utils import uuidutils
 from tooz import hashring
 
+from networking_baremetal.agent import agent_config
+from networking_baremetal.agent import l2vni_trunk_manager
+from networking_baremetal.agent import ovn_client
 from networking_baremetal import constants
 from networking_baremetal import ironic_client
+from networking_baremetal import neutron_client
 
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
@@ -43,7 +53,9 @@ CONF.import_group('AGENT', 'neutron.plugins.ml2.drivers.agent.config')
 
 
 def list_opts():
-    return [('agent', agent_config.AGENT_STATE_OPTS)]
+    return [
+        ('agent', neutron_agent_config.AGENT_STATE_OPTS),
+    ] + agent_config.list_opts() + neutron_client.list_opts()
 
 
 def _get_notification_transport_url():
@@ -148,6 +160,41 @@ class BaremetalNeutronAgent(service.ServiceBase):
         self.state_rpc = agent_rpc.PluginReportStateAPI(topics.REPORTS)
         self.ironic_client = ironic_client.get_client()
         self.reported_nodes = {}
+
+        # L2VNI trunk reconciliation (optional feature)
+        self.trunk_manager = None
+        self.l2vni_reconcile = None
+        self._l2vni_reconciliation_lock = threading.Lock()
+        if CONF.l2vni.enable_l2vni_trunk_reconciliation:
+            LOG.info('L2VNI trunk reconciliation enabled, initializing...')
+            neutron = self._get_neutron_client()
+
+            # Try to connect to OVN, but allow startup if OVN is unavailable
+            # The reconciliation loop will retry connecting
+            ovn_nb_idl = None
+            ovn_sb_idl = None
+            try:
+                ovn_nb_idl = ovn_client.get_ovn_nb_idl()
+                ovn_sb_idl = ovn_client.get_ovn_sb_idl()
+                LOG.info('Successfully connected to OVN databases')
+            except Exception:
+                LOG.warning(
+                    'Failed to connect to OVN databases during startup. '
+                    'This is expected if OVN is restarting or not yet '
+                    'available. The agent will retry connecting during '
+                    'reconciliation cycles.', exc_info=True)
+
+            self.trunk_manager = (
+                l2vni_trunk_manager.L2VNITrunkManager(
+                    neutron_client=neutron,
+                    ovn_nb_idl=ovn_nb_idl,
+                    ovn_sb_idl=ovn_sb_idl,
+                    ironic_client=self.ironic_client,
+                    member_manager=self.member_manager,
+                    agent_id=self.agent_id
+                ))
+            LOG.info('L2VNI trunk manager initialized')
+
         LOG.info('Agent networking-baremetal initialized.')
 
     def start(self):
@@ -163,12 +210,32 @@ class BaremetalNeutronAgent(service.ServiceBase):
                              initial_delay=CONF.AGENT.report_interval)
         self.cleanup_stale_agents()
 
+        # Start L2VNI trunk reconciliation if enabled
+        if self.trunk_manager:
+            # Add random jitter to prevent thundering herd on restart
+            # First run happens after jitter only, subsequent runs at interval
+            # NOTE: Using pseudo-random is acceptable for jitter (S311)
+            jitter = random.randint(  # noqa: S311
+                0, CONF.l2vni.l2vni_startup_jitter_max)
+
+            self.l2vni_reconcile = loopingcall.FixedIntervalLoopingCall(
+                self._reconcile_l2vni_trunks)
+            self.l2vni_reconcile.start(
+                interval=CONF.l2vni.l2vni_reconciliation_interval,
+                initial_delay=jitter)
+            LOG.info('Started L2VNI trunk reconciliation loop '
+                     '(interval: %ds, first run in %ds)',
+                     CONF.l2vni.l2vni_reconciliation_interval, jitter)
+
     def stop(self, failure=False):
         LOG.info('Stopping agent networking-baremetal.')
         if self.heartbeat:
             self.heartbeat.stop()
         if self.notify_agents:
             self.notify_agents.stop()
+        if self.l2vni_reconcile:
+            self.l2vni_reconcile.stop()
+            LOG.info('Stopped L2VNI trunk reconciliation loop')
         self.listener.stop()
         self.pool_listener.stop()
         self.listener.wait()
@@ -373,6 +440,56 @@ class BaremetalNeutronAgent(service.ServiceBase):
             LOG.info("Stale baremetal agent for hosts was removed: %s",
                      ", ".join(deleted_agents))
 
+    def _get_neutron_client(self):
+        """Get Neutron client using OpenStack SDK.
+
+        Uses Neutron-specific credentials from [neutron] section if configured,
+        otherwise falls back to [ironic] section credentials for backwards
+        compatibility.
+
+        :returns: OpenStack SDK Connection object for accessing network APIs
+        """
+        return neutron_client.get_client()
+
+    def _reconcile_l2vni_trunks(self):
+        """Periodic L2VNI trunk reconciliation"""
+        if not self._l2vni_reconciliation_lock.acquire(blocking=False):
+            LOG.debug("L2VNI reconciliation already in progress, skipping")
+            return
+
+        try:
+            LOG.debug("L2VNI reconciliation triggered.")
+
+            # Retry OVN connection if not established
+            if (self.trunk_manager.ovn_nb_idl is None
+                    or self.trunk_manager.ovn_sb_idl is None):
+                LOG.debug("OVN connection not established, attempting to "
+                          "connect...")
+                try:
+                    if self.trunk_manager.ovn_nb_idl is None:
+                        self.trunk_manager.ovn_nb_idl = (
+                            ovn_client.get_ovn_nb_idl())
+                        LOG.info("Successfully connected to OVN Northbound "
+                                 "database")
+                    if self.trunk_manager.ovn_sb_idl is None:
+                        self.trunk_manager.ovn_sb_idl = (
+                            ovn_client.get_ovn_sb_idl())
+                        LOG.info("Successfully connected to OVN Southbound "
+                                 "database")
+                except Exception:
+                    LOG.warning("Failed to connect to OVN databases, "
+                                "skipping reconciliation cycle. Will retry "
+                                "on next cycle.", exc_info=True)
+                    return
+
+            self.trunk_manager.reconcile()
+            LOG.debug("L2VNI trunk reconciliation completed.")
+
+        except Exception:
+            LOG.exception("Failed to reconcile L2VNI trunks")
+        finally:
+            self._l2vni_reconciliation_lock.release()
+
 
 def _unregiser_deprecated_opts():
     CONF.reset()
@@ -384,11 +501,42 @@ def _unregiser_deprecated_opts():
 
 def main():
     common_config.register_common_config_options()
+    # Register agent configuration options (L2VNI and baremetal agent)
+    agent_config.register_agent_opts(CONF)
+    # Register Neutron client configuration options
+    neutron_client.get_session(neutron_client.NEUTRON_GROUP)
+
+    # Register Neutron OVN options so we can read [ovn] section as fallback
+    # for L2VNI OVN connection settings
+    if ovn_conf is not None:
+        try:
+            ovn_conf.register_opts()
+        except Exception as e:
+            # If neutron OVN config can't be registered, L2VNI will use
+            # its own config or defaults
+            LOG.debug('Could not register Neutron OVN config options: %s', e)
+
     # TODO(hjensas): Imports from neutron in ironic_neutron_agent registers the
     # client options. We need to unregister the options we are deprecating
     # first to avoid DuplicateOptError. Remove this when dropping deprecations.
     _unregiser_deprecated_opts()
-    common_config.init(sys.argv[1:])
+
+    # Add ML2 OVN config file to search path for OVN connection settings
+    # This allows L2VNI to read Neutron's OVN configuration if available
+    # Only include files that actually exist to avoid startup failures
+    candidate_config_files = [
+        '/etc/neutron/neutron.conf',
+        '/etc/neutron/plugins/ml2/ml2_conf.ini',
+        '/etc/neutron/plugins/ml2/ovn_agent.ini'
+    ]
+    default_config_files = [f for f in candidate_config_files
+                            if os.path.exists(f)]
+    if len(default_config_files) != len(candidate_config_files):
+        missing = set(candidate_config_files) - set(default_config_files)
+        LOG.warning('Config files not found (skipping): %s',
+                    ', '.join(missing))
+
+    common_config.init(sys.argv[1:], default_config_files=default_config_files)
     common_config.setup_logging()
     agent = BaremetalNeutronAgent()
     launcher = service.launch(cfg.CONF, agent, restart_method='mutate')
