@@ -16,6 +16,7 @@ import enum
 
 BAREMETAL_AGENT_TYPE = "Baremetal Node"
 BAREMETAL_BINARY = 'ironic-neutron-agent'
+BAREMETAL_NONE = 'baremetal:none'  # External baremetal port device_owner
 
 LOCAL_LINK_INFO = 'local_link_information'
 LOCAL_GROUP_INFO = 'local_group_information'

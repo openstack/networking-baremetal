@@ -38,6 +38,7 @@ from oslo_service import loopingcall
 from oslo_service import service
 from oslo_utils import timeutils
 from oslo_utils import uuidutils
+from ovsdbapp import exceptions as ovs_exc
 from tooz import hashring
 
 from networking_baremetal.agent import agent_config
@@ -195,6 +196,12 @@ class BaremetalNeutronAgent(service.ServiceBase):
                 ))
             LOG.info('L2VNI trunk manager initialized')
 
+        # HA chassis group alignment reconciliation (optional feature)
+        self.ha_alignment_reconcile = None
+        self._ha_alignment_lock = threading.Lock()
+        if CONF.baremetal_agent.enable_ha_chassis_group_alignment:
+            LOG.info('HA chassis group alignment reconciliation enabled')
+
         LOG.info('Agent networking-baremetal initialized.')
 
     def start(self):
@@ -227,6 +234,25 @@ class BaremetalNeutronAgent(service.ServiceBase):
                      '(interval: %ds, first run in %ds)',
                      CONF.l2vni.l2vni_reconciliation_interval, jitter)
 
+        # Start HA chassis group alignment reconciliation if enabled
+        if CONF.baremetal_agent.enable_ha_chassis_group_alignment:
+            # Add random jitter to prevent thundering herd on restart
+            # NOTE: Using pseudo-random is acceptable for jitter (S311)
+            jitter = random.randint(  # noqa: S311
+                0, min(60, CONF.baremetal_agent
+                       .ha_chassis_group_alignment_interval))
+
+            self.ha_alignment_reconcile = loopingcall.FixedIntervalLoopingCall(
+                self._reconcile_ha_chassis_group_alignment)
+            self.ha_alignment_reconcile.start(
+                interval=CONF.baremetal_agent
+                .ha_chassis_group_alignment_interval,
+                initial_delay=jitter)
+            LOG.info('Started HA chassis group alignment reconciliation loop '
+                     '(interval: %ds, first run in %ds)',
+                     CONF.baremetal_agent
+                     .ha_chassis_group_alignment_interval, jitter)
+
     def stop(self, failure=False):
         LOG.info('Stopping agent networking-baremetal.')
         if self.heartbeat:
@@ -236,6 +262,9 @@ class BaremetalNeutronAgent(service.ServiceBase):
         if self.l2vni_reconcile:
             self.l2vni_reconcile.stop()
             LOG.info('Stopped L2VNI trunk reconciliation loop')
+        if self.ha_alignment_reconcile:
+            self.ha_alignment_reconcile.stop()
+            LOG.info('Stopped HA chassis group alignment reconciliation loop')
         self.listener.stop()
         self.pool_listener.stop()
         self.listener.wait()
@@ -489,6 +518,199 @@ class BaremetalNeutronAgent(service.ServiceBase):
             LOG.exception("Failed to reconcile L2VNI trunks")
         finally:
             self._l2vni_reconciliation_lock.release()
+
+    def _reconcile_ha_chassis_group_alignment(self):
+        """Periodic HA chassis group alignment reconciliation.
+
+        This reconciliation ensures that router ports on networks with
+        baremetal external ports use the same ha_chassis_group as those
+        baremetal ports. This fixes LP#1995078 where mismatched priorities
+        cause intermittent connectivity issues.
+        """
+        if not self._ha_alignment_lock.acquire(blocking=False):
+            LOG.debug("HA alignment reconciliation already in progress, "
+                      "skipping")
+            return
+
+        try:
+            LOG.debug("HA chassis group alignment reconciliation triggered.")
+
+            neutron = self._get_neutron_client()
+
+            # Get OVN connection (reuse from trunk manager if available,
+            # otherwise create new connection)
+            ovn_nb_idl = None
+            if self.trunk_manager and self.trunk_manager.ovn_nb_idl:
+                ovn_nb_idl = self.trunk_manager.ovn_nb_idl
+            else:
+                try:
+                    ovn_nb_idl = ovn_client.get_ovn_nb_idl()
+                except (ovs_exc.OvsdbAppException, RuntimeError):
+                    LOG.warning("Failed to connect to OVN Northbound "
+                                "database, skipping reconciliation cycle. "
+                                "Will retry on next cycle.", exc_info=True)
+                    return
+
+            # Determine time window for filtering recent resources
+            cutoff_time = None
+            if (CONF.baremetal_agent
+                    .limit_ha_chassis_group_alignment_to_recent_changes_only):
+                window = CONF.baremetal_agent.ha_chassis_group_alignment_window
+                if window > 0:
+                    cutoff_time = timeutils.utcnow_ts() - window
+                    LOG.debug("Filtering to resources updated after %s "
+                              "(window: %ds)", cutoff_time, window)
+
+            # Get all baremetal external ports from Neutron
+            # device_owner='baremetal:none' indicates external baremetal ports
+            filters = {'device_owner': constants.BAREMETAL_NONE}
+            bm_ports = list(neutron.network.ports(**filters))
+            LOG.debug("Found %d baremetal external ports", len(bm_ports))
+
+            if not bm_ports:
+                LOG.debug("No baremetal external ports found, nothing to do")
+                return
+
+            # Group ports by network
+            networks_with_bm_ports = {}
+            for port in bm_ports:
+                network_id = port.network_id
+
+                # Apply time window filtering if enabled
+                if cutoff_time is not None:
+                    port_updated = timeutils.parse_isotime(
+                        port.updated_at).timestamp()
+                    if port_updated < cutoff_time:
+                        LOG.debug("Skipping port %s (updated %s, before "
+                                  "cutoff %s)", port.id, port.updated_at,
+                                  cutoff_time)
+                        continue
+
+                # Check if this agent should handle this network via hash ring
+                # Use network_id as the key for consistent hashing
+                network_key = network_id.encode('utf-8')
+                if self.agent_id not in self.member_manager.hashring[
+                        network_key]:
+                    LOG.debug("Network %s not managed by this agent "
+                              "(hash ring)", network_id)
+                    continue
+
+                if network_id not in networks_with_bm_ports:
+                    networks_with_bm_ports[network_id] = []
+                networks_with_bm_ports[network_id].append(port)
+
+            LOG.debug("Processing %d networks with baremetal ports managed "
+                      "by this agent", len(networks_with_bm_ports))
+
+            # Process each network
+            for network_id, ports in networks_with_bm_ports.items():
+                try:
+                    self._align_ha_chassis_group_for_network(
+                        network_id, ports, neutron, ovn_nb_idl)
+                except (ovs_exc.OvsdbAppException,
+                        sdk_exc.OpenStackCloudException, RuntimeError):
+                    LOG.exception("Failed to align HA chassis group for "
+                                  "network %s", network_id)
+
+            LOG.debug("HA chassis group alignment reconciliation completed.")
+
+        except (sdk_exc.OpenStackCloudException, ovs_exc.OvsdbAppException,
+                ValueError, AttributeError):
+            LOG.exception("Failed to reconcile HA chassis group alignment")
+        finally:
+            self._ha_alignment_lock.release()
+
+    def _align_ha_chassis_group_for_network(self, network_id, bm_ports,
+                                            neutron, ovn_nb_idl):
+        """Align HA chassis groups for a specific network.
+
+        :param network_id: Neutron network UUID
+        :param bm_ports: List of baremetal external ports on this network
+        :param neutron: Neutron client
+        :param ovn_nb_idl: OVN Northbound IDL connection
+        """
+        LOG.debug("Aligning HA chassis group for network %s with %d "
+                  "baremetal ports", network_id, len(bm_ports))
+
+        # Find the HA chassis group used by baremetal ports via OVN
+        # All baremetal ports on the same network should use the same
+        # HA chassis group
+        bm_ha_chassis_group = None
+        for port in bm_ports:
+            try:
+                lsp = ovn_nb_idl.lsp_get(port.id).execute(check_error=True)
+                if lsp and hasattr(lsp, 'ha_chassis_group'):
+                    ha_group = lsp.ha_chassis_group
+                    if ha_group:
+                        bm_ha_chassis_group = ha_group[0] if isinstance(
+                            ha_group, list) else ha_group
+                        LOG.debug("Found HA chassis group %s from port %s",
+                                  bm_ha_chassis_group, port.id)
+                        break
+            except (ovs_exc.OvsdbAppException, RuntimeError, AttributeError):
+                LOG.debug("Could not get HA chassis group from port %s",
+                          port.id, exc_info=True)
+                continue
+
+        if not bm_ha_chassis_group:
+            LOG.debug("No HA chassis group found for baremetal ports on "
+                      "network %s, skipping", network_id)
+            return
+
+        LOG.debug("Target HA chassis group for network %s: %s",
+                  network_id, bm_ha_chassis_group)
+
+        # Find all router ports on this network
+        router_ports = list(neutron.network.ports(
+            network_id=network_id,
+            device_owner=n_const.DEVICE_OWNER_ROUTER_INTF))
+
+        if not router_ports:
+            LOG.debug("No router ports found on network %s", network_id)
+            return
+
+        LOG.debug("Found %d router ports on network %s",
+                  len(router_ports), network_id)
+
+        # Check and update each router port's HA chassis group
+        for rport in router_ports:
+            try:
+                lrp_name = f'lrp-{rport.id}'
+                lrp = ovn_nb_idl.lrp_get(lrp_name).execute(check_error=True)
+
+                if not lrp:
+                    LOG.debug("Logical router port %s not found in OVN",
+                              lrp_name)
+                    continue
+
+                current_ha_group = None
+                if hasattr(lrp, 'ha_chassis_group'):
+                    ha_group = lrp.ha_chassis_group
+                    if ha_group:
+                        current_ha_group = ha_group[0] if isinstance(
+                            ha_group, list) else ha_group
+
+                if current_ha_group == bm_ha_chassis_group:
+                    LOG.debug("Router port %s already has correct HA "
+                              "chassis group %s", rport.id,
+                              bm_ha_chassis_group)
+                    continue
+
+                # Update the router port's HA chassis group
+                LOG.info("Updating router port %s HA chassis group from "
+                         "%s to %s (network %s)",
+                         rport.id, current_ha_group, bm_ha_chassis_group,
+                         network_id)
+
+                ovn_nb_idl.lrp_set_ha_chassis_group(
+                    lrp_name, bm_ha_chassis_group).execute(check_error=True)
+
+                LOG.info("Successfully updated router port %s HA chassis "
+                         "group", rport.id)
+
+            except (ovs_exc.OvsdbAppException, RuntimeError, AttributeError):
+                LOG.exception("Failed to update HA chassis group for "
+                              "router port %s", rport.id)
 
 
 def _unregiser_deprecated_opts():
