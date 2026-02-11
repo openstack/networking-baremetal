@@ -34,13 +34,16 @@ function install_networking_baremetal {
 
 function configure_networking_baremetal {
     if [[ -z "$Q_ML2_PLUGIN_MECHANISM_DRIVERS" ]]; then
-        Q_ML2_PLUGIN_MECHANISM_DRIVERS='baremetal'
+        Q_ML2_PLUGIN_MECHANISM_DRIVERS='baremetal-l2vni,baremetal'
     else
         if [[ ! $Q_ML2_PLUGIN_MECHANISM_DRIVERS =~ $(echo '\<baremetal\>') ]]; then
-            Q_ML2_PLUGIN_MECHANISM_DRIVERS+=',baremetal'
+            Q_ML2_PLUGIN_MECHANISM_DRIVERS+=',baremetal-l2vni,baremetal'
         fi
     fi
     populate_ml2_config /$Q_PLUGIN_CONF_FILE ml2 mechanism_drivers=$Q_ML2_PLUGIN_MECHANISM_DRIVERS
+    # Set a handy default physical network parameter, so we don't have to
+    # update each port in CI.
+    populate_ml2_config /$Q_PLUGIN_CONF_FILE baremetal_l2vni default_physical_network=${PHYSICAL_NETWORK:-mynetwork}
 }
 
 function configure_networking_baremetal_neutron_agent {

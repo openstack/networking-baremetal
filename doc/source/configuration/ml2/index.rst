@@ -30,3 +30,4 @@ refer to :doc:`device_drivers/index` for details.
    :maxdepth: 4
 
    Device Drivers <device_drivers/index>
+   L2VNI Mechanism Driver <l2vni-mechanism-driver>

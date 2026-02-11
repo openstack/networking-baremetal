@@ -1,0 +1,23 @@
+---
+features:
+  - |
+    Adds a new L2VNI (Layer 2 Virtual Network Identifier) mechanism driver
+    that enables baremetal servers to connect to VXLAN and Geneve overlay
+    networks. The driver automatically allocates dynamic VLAN segments on
+    physical networks and creates OVN localnet ports to bridge overlay traffic
+    to baremetal nodes.
+
+    To enable the driver, add ``baremetal_l2vni`` to the mechanism_drivers
+    list in ``ml2_conf.ini``:
+
+    .. code-block:: ini
+
+       [ml2]
+       mechanism_drivers = ovn,baremetal_l2vni
+
+       [baremetal_l2vni]
+       create_localnet_ports = True
+       default_physical_network = physnet1
+
+    See the L2VNI mechanism driver documentation for complete configuration
+    and deployment details.
