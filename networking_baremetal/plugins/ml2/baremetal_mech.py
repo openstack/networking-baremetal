@@ -51,8 +51,9 @@ class BaremetalMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
             device_driver.load_config()
             try:
                 device_driver.validate()
-            except exceptions.DriverValidationError as e:
-                LOG.exception(e)
+            except exceptions.DriverValidationError:
+                LOG.exception("Failed to validate device driver %s",
+                              device_id)
 
     @property
     def connectivity(self):

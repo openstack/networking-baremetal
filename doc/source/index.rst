@@ -33,7 +33,7 @@ Administrator Guide
 .. toctree::
   :maxdepth: 2
 
-  admin/ha-chassis-group-alignment
+  admin/index
 
 Contributor Guide
 =================

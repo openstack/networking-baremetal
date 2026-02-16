@@ -14,7 +14,7 @@
 #    under the License.
 
 import os
-import random
+import secrets
 import socket
 import sys
 import threading
@@ -221,9 +221,8 @@ class BaremetalNeutronAgent(service.ServiceBase):
         if self.trunk_manager:
             # Add random jitter to prevent thundering herd on restart
             # First run happens after jitter only, subsequent runs at interval
-            # NOTE: Using pseudo-random is acceptable for jitter (S311)
-            jitter = random.randint(  # noqa: S311
-                0, CONF.l2vni.l2vni_startup_jitter_max)
+            jitter = secrets.randbelow(
+                CONF.l2vni.l2vni_startup_jitter_max + 1)
 
             self.l2vni_reconcile = loopingcall.FixedIntervalLoopingCall(
                 self._reconcile_l2vni_trunks)
@@ -238,9 +237,8 @@ class BaremetalNeutronAgent(service.ServiceBase):
         if CONF.baremetal_agent.enable_ha_chassis_group_alignment:
             # Add random jitter to prevent thundering herd on restart
             # NOTE: Using pseudo-random is acceptable for jitter (S311)
-            jitter = random.randint(  # noqa: S311
-                0, min(60, CONF.baremetal_agent
-                       .ha_chassis_group_alignment_interval))
+            jitter = secrets.randbelow(
+                CONF.baremetal_agent.ha_chassis_group_alignment_interval + 1)
 
             self.ha_alignment_reconcile = loopingcall.FixedIntervalLoopingCall(
                 self._reconcile_ha_chassis_group_alignment)
