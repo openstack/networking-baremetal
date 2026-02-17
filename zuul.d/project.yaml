@@ -7,6 +7,10 @@
     check:
       jobs:
         - networking-baremetal-multitenant-vlans
+        - networking-baremetal-ovn-vxlan
+        - networking-baremetal-ovn-geneve
     gate:
       jobs:
         - networking-baremetal-multitenant-vlans
+        - networking-baremetal-ovn-vxlan
+        - networking-baremetal-ovn-geneve

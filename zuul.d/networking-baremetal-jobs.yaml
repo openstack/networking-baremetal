@@ -69,6 +69,106 @@
         neutron-metering: True
 
 - job:
+    name: networking-baremetal-ovn-vxlan
+    parent: ironic-base
+    irrelevant-files:
+      - ^.*\.rst$
+      - ^doc/.*$
+      - ^setup.cfg$
+      - ^test-requirements.txt$
+      - ^tools/.*$
+      - ^tox.ini$
+    required-projects:
+      - openstack/networking-generic-switch
+      - openstack/networking-baremetal
+      - openstack/ironic
+      - openstack/sushy-tools
+    vars:
+      tempest_test_timeout: 2400
+      tempest_test_regex: "BaremetalBasicOps"
+      devstack_plugins:
+        networking-generic-switch: https://opendev.org/openstack/networking-generic-switch
+        networking-baremetal: https://opendev.org/openstack/networking-baremetal
+        ironic: https://opendev.org/openstack/ironic
+      devstack_localrc:
+        IRONIC_DEPLOY_DRIVER: redfish
+        # This uses vmedia to boot the node. TFTP is super sensitive to MTU
+        # differences, and because we may end up running the job in multi-node
+        # one day, we really don't want to deal with that headache.
+        IRONIC_ENABLED_BOOT_INTERFACES: redfish-virtual-media
+        IRONIC_ENABLED_HARDWARE_TYPES: redfish
+        IRONIC_ENABLED_MANAGEMENT_INTERFACES: redfish
+        BUILD_TIMEOUT: 2400
+        ENABLE_TENANT_VLANS: True
+        IRONIC_DEFAULT_DEPLOY_INTERFACE: direct
+        IRONIC_DEFAULT_RESCUE_INTERFACE: ""
+        IRONIC_ENABLED_NETWORK_INTERFACES: neutron
+        IRONIC_NETWORK_INTERFACE: neutron
+        IRONIC_PROVISION_NETWORK_NAME: ironic-provision
+        # TODO: Likely need to fix ironic-devstack to support this next value as none
+        IRONIC_PROVISION_PROVIDER_NETWORK_TYPE: vxlan
+        IRONIC_PROVISION_SUBNET_GATEWAY: 10.0.5.1
+        IRONIC_PROVISION_SUBNET_PREFIX: 10.0.5.0/24
+        IRONIC_TEMPEST_BUILD_TIMEOUT: 2400
+        IRONIC_TEMPEST_WHOLE_DISK_IMAGE: True
+        IRONIC_USE_LINK_LOCAL: True
+        IRONIC_USE_NEUTRON_SEGMENTS: False
+        IRONIC_USE_VXLAN: True
+        IRONIC_VM_COUNT: 3
+        IRONIC_VM_EPHEMERAL_DISK: 0
+        # TODO(TheJulia): we may want to force this to True.
+        IRONIC_AUTOMATED_CLEAN_ENABLED: False
+        OVS_PHYSICAL_BRIDGE: brbm
+        OVN_BRIDGE_MAPPINGS: mynetwork:brbm,public:br-ex
+        PHYSICAL_NETWORK: mynetwork
+        Q_AGENT: ovn
+        Q_ML2_TENANT_NETWORK_TYPE: vxlan
+        Q_ML2_PLUGIN_TYPE_DRIVERS: vxlan,geneve,vlan,flat
+        Q_ML2_PLUGIN_MECHANISM_DRIVERS: ovn,baremetal-l2vni,genericswitch,baremetal
+        ML2_L3_PLUGIN: ovn-router,trunk,segments
+        Q_PLUGIN: ml2
+        Q_USE_DEBUG_COMMAND: True
+        SWIFT_ENABLE_TEMPURLS: True
+        SWIFT_TEMPURL_KEY: secretkey
+        TENANT_VLAN_RANGE: 100:150
+        EBTABLES_RACE_FIX: True
+        NEUTRON_PORT_SECURITY: False
+      devstack_services:
+        s-account: True
+        s-container: True
+        s-object: True
+        s-proxy: True
+        generic_switch: True
+        networking_baremetal: True
+        ir-neutronagt: True
+        neutron-api: True
+        neutron-agent: False
+        neutron-dhcp: False
+        neutron-l3: False
+        neutron-metadata-agent: False
+        neutron-metering: False
+        ovn-controller: True
+        ovn-northd: True
+        ovs-vswitchd: True
+        ovsdb-server: True
+        q-ovn-agent: True
+        q-ovn-metadata-agent: True
+        # Service names from ironic-base
+        q-svc: True
+        q-agt: False
+        q-dhcp: False
+        q-l3: False
+        q-meta: False
+
+- job:
+    name: networking-baremetal-ovn-geneve
+    parent: networking-baremetal-ovn-vxlan
+    vars:
+      devstack_localrc:
+        Q_ML2_TENANT_NETWORK_TYPE: geneve
+        IRONIC_PROVISION_PROVIDER_NETWORK_TYPE: geneve
+
+- job:
     name: networking-baremetal-tox-codespell
     parent: openstack-tox
     timeout: 7200
