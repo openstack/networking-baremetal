@@ -1,0 +1,13 @@
+---
+fixes:
+  - |
+    Fixes an issue where Neutron would reject baremetal port binding to
+    VXLAN and Geneve overlay networks with error "Host is not connected
+    to any segments on routed provider network" when the segments service
+    plugin was enabled. The baremetal-l2vni mechanism driver now reports
+    support for overlay network types (vxlan, geneve) to enable
+    hierarchical port binding. The base baremetal mechanism driver
+    continues to handle only flat and vlan networks. This allows baremetal
+    nodes to successfully bind to tenant overlay networks using the L2VNI
+    hierarchical binding model without being incorrectly treated as routed
+    provider networks.

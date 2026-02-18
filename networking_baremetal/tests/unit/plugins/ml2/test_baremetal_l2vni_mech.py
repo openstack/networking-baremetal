@@ -39,6 +39,14 @@ class TestL2vniMechanismDriver(tests_base.BaseTestCase):
         self.assertEqual(portbindings.CONNECTIVITY_L2,
                          self.driver.connectivity)
 
+    def test_get_allowed_network_types(self):
+        """Test that L2VNI driver only reports overlay network types"""
+        agent_mock = mock.Mock()
+        allowed_network_types = self.driver.get_allowed_network_types(
+            agent_mock)
+        self.assertEqual(allowed_network_types,
+                         [n_const.TYPE_VXLAN, n_const.TYPE_GENEVE])
+
     def test_get_ovn_client_success(self):
         """Test successful OVN client retrieval"""
         mock_plugin = mock.Mock()

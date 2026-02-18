@@ -79,6 +79,16 @@ class L2vniMechanismDriver(api.MechanismDriver):
     def initialize(self):
         pass
 
+    def get_allowed_network_types(self, agent):
+        """Return the agent's or driver's allowed network types.
+
+        L2VNI handles hierarchical port binding for overlay networks only.
+        Returns vxlan and geneve, which are handled by creating dynamic
+        VLAN segments. Flat and VLAN networks are handled by the base
+        baremetal mechanism driver.
+        """
+        return [p_const.TYPE_VXLAN, p_const.TYPE_GENEVE]
+
     @functools.cached_property
     def _get_ovn_client(self):
         """Get OVN client from the OVN mechanism driver.
@@ -186,10 +196,22 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 return True
 
             # Check all chassis in the cluster
-            for chassis in ovn_client._sb_idl.tables['Chassis'].rows.values():
-                # Check bridge mappings in external_ids
+            chassis_table = ovn_client._sb_idl.tables['Chassis']
+            chassis_list = list(chassis_table.rows.values())
+            LOG.debug("Checking %d chassis for physnet %s",
+                      len(chassis_list), physnet)
+
+            for chassis in chassis_list:
+                # Check bridge mappings in external_ids first
                 bridge_mappings = chassis.external_ids.get(
                     'ovn-bridge-mappings', '')
+
+                # Fallback to other_config if external_ids is empty
+                if not bridge_mappings and hasattr(chassis, 'other_config'):
+                    bridge_mappings = chassis.other_config.get(
+                        'ovn-bridge-mappings', '')
+                    LOG.debug("Using bridge_mappings from other_config: %s",
+                              bridge_mappings)
 
                 # Format is "physnet1:br-provider,physnet2:br-ex"
                 physnets = [mapping.split(':')[0].strip()
@@ -201,6 +223,19 @@ class L2vniMechanismDriver(api.MechanismDriver):
                               "mappings: %s", physnet, chassis.name,
                               bridge_mappings)
                     return True
+
+                # We've hit the bottom of the chassis check loop, and
+                # did not find what we are looking for, meaning there
+                # is an input mismatch, or misconfiguration someplace...
+                # or the operator is intentionally partitioning everything
+                # apart.
+                # TODO(TheJulia): Maybe one-day make this configurable?
+                found = ', '.join(physnets)
+                LOG.warning(
+                    "Evaluated chassis %s and did not find physnet %s, "
+                    "this may be acceptable with complex environments "
+                    "or indication of a misconfiguration. Found: %s.",
+                    chassis.name, physnet, found)
 
             # No chassis has this physnet - this is an error condition
             LOG.error("Physical network %s not found in bridge-mappings "
@@ -485,9 +520,11 @@ class L2vniMechanismDriver(api.MechanismDriver):
         if context.current[portbindings.VNIC_TYPE] not in SUPPORTED_VNIC_TYPES:
             return
 
-        # This mechanism wants to trigger extra steps against networks
-        # for which this plugin helps provide mappings and attachments for.
-        for segment in context.network.network_segments:
+        # Only bind overlay segments (vxlan, geneve) at the current level.
+        # Check segments_to_bind rather than all network segments to avoid
+        # re-binding the overlay segment when we're at level 2 binding the
+        # VLAN segment.
+        for segment in context.segments_to_bind:
             if segment[api.NETWORK_TYPE] in EVPN_TYPES:
                 self._bind_port_segment(context, segment)
                 # Fast out to avoid walking the rest of the list
@@ -581,7 +618,12 @@ class L2vniMechanismDriver(api.MechanismDriver):
             physnet,
             vlan_id
         )
-
-        # record the current EVPN segment as bound and move on to binding
-        # the VLAN segment
+        LOG.debug("Calling continue_binding for overlay segment %s with "
+                  "lower VLAN segment %s (vlan_id=%s) on physical network %s",
+                  bind_segment[api.ID], lower_segment[api.ID],
+                  lower_segment.get(api.SEGMENTATION_ID), physnet)
+        # record the current segment as bound and move on to binding
+        # the VLAN segment. Under no circumstances, should we call
+        # context.set_binding because this mech driver cannot bind
+        # the entirety of the port structure, only part.
         context.continue_binding(bind_segment[api.ID], [lower_segment])
