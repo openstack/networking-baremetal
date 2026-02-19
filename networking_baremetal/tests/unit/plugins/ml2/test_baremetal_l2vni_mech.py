@@ -472,9 +472,11 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
         mock_get_client.return_value = mock_ovn_client
         mock_can_forward.return_value = True
 
-        # Mock that port already exists
+        # Mock that port already exists with matching VLAN tag
+        existing_port = mock.Mock()
+        existing_port.tag = [100]  # OVN stores tags as list
         mock_ovn_client._nb_idl.lsp_get.return_value.execute.return_value = (
-            mock.Mock())
+            existing_port)
 
         mock_context = mock.Mock()
 
@@ -483,6 +485,37 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
 
         # Should not create new port
         mock_ovn_client._nb_idl.create_lswitch_port.assert_not_called()
+
+    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
+                       '_get_ovn_client', new_callable=mock.PropertyMock)
+    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
+                       '_chassis_can_forward_physnet', autospec=True)
+    def test_ensure_localnet_port_vlan_tag_mismatch(
+            self, mock_can_forward, mock_get_client):
+        """Test localnet port recreation when VLAN tag changes"""
+        mock_ovn_client = mock.Mock()
+        mock_get_client.return_value = mock_ovn_client
+        mock_can_forward.return_value = True
+
+        # Mock that port exists with old VLAN tag 107
+        existing_port = mock.Mock()
+        existing_port.tag = [107]
+        mock_ovn_client._nb_idl.lsp_get.return_value.execute.return_value = (
+            existing_port)
+
+        mock_context = mock.Mock()
+
+        # Try to ensure port with new VLAN tag 135
+        self.driver._ensure_localnet_port(
+            mock_context, 'network-id', 'physnet1', 135)
+
+        # Should delete old port
+        mock_ovn_client._nb_idl.lsp_del.assert_called_once()
+        # Should create new port with correct VLAN tag
+        mock_ovn_client._nb_idl.create_lswitch_port.assert_called_once()
+        call_args = (
+            mock_ovn_client._nb_idl.create_lswitch_port.call_args)
+        self.assertEqual(call_args.kwargs['tag'], 135)
 
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
                        '_get_ovn_client', new_callable=mock.PropertyMock)
@@ -601,6 +634,68 @@ class TestL2vniPortUpdate(tests_base.BaseTestCase):
             resources.PORT,
             'L2'
         )
+
+    @mock.patch.object(port_objects.PortBindingLevel, 'get_objects',
+                       autospec=True)
+    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
+                       '_remove_localnet_port', autospec=True)
+    def test_delete_port_postcommit_cleanup_segment(
+            self, mock_remove_port, mock_get_objects):
+        """Test delete_port_postcommit cleans up when last port deleted"""
+        mock_context = mock.Mock()
+        network = ml2_utils.get_test_network()
+
+        mock_context.current = {
+            portbindings.VNIC_TYPE: portbindings.VNIC_BAREMETAL,
+        }
+
+        segment = {
+            api.ID: 'segment-id',
+            api.NETWORK_TYPE: n_const.TYPE_VLAN,
+            api.SEGMENTATION_ID: 107,
+            api.PHYSICAL_NETWORK: 'physnet1'
+        }
+        mock_context.bottom_bound_segment = segment
+        mock_network = mock.Mock()
+        mock_network.current = network
+        mock_context.network = mock_network
+
+        # No other ports using this segment (last port deleted)
+        mock_get_objects.return_value = []
+
+        self.driver.delete_port_postcommit(mock_context)
+
+        # Should remove localnet port and release segment
+        mock_remove_port.assert_called_once()
+        mock_context.release_dynamic_segment.assert_called_once_with(
+            'segment-id')
+
+    @mock.patch.object(port_objects.PortBindingLevel, 'get_objects',
+                       autospec=True)
+    def test_delete_port_postcommit_other_ports_remain(
+            self, mock_get_objects):
+        """Test delete_port_postcommit preserves segment when ports remain"""
+        mock_context = mock.Mock()
+
+        mock_context.current = {
+            portbindings.VNIC_TYPE: portbindings.VNIC_BAREMETAL,
+        }
+
+        segment = {
+            api.ID: 'segment-id',
+            api.NETWORK_TYPE: n_const.TYPE_VLAN,
+            api.SEGMENTATION_ID: 107,
+            api.PHYSICAL_NETWORK: 'physnet1'
+        }
+        mock_context.bottom_bound_segment = segment
+
+        # Other ports still using this segment
+        mock_get_objects.return_value = [mock.Mock()]
+
+        self.driver.delete_port_postcommit(mock_context)
+
+        # Should NOT release segment
+        mock_context.release_dynamic_segment.assert_not_called()
 
 
 class TestL2vniRouterGateway(tests_base.BaseTestCase):

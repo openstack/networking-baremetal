@@ -1,0 +1,19 @@
+---
+fixes:
+  - |
+    Fixes an issue in the baremetal-l2vni mechanism driver where OVN
+    localnet ports could become orphaned with stale VLAN tags when dynamic
+    segments were released and reallocated. This could result in VLAN tag
+    mismatches causing traffic to be tagged with incorrect VLAN IDs.
+
+    The driver now validates that existing localnet ports have the correct
+    VLAN tag matching the current dynamic segment allocation. If a mismatch
+    is detected (for example, the localnet port has VLAN 107 but the current
+    segment uses VLAN 135), the stale port is automatically deleted and
+    recreated with the correct tag.
+
+    Additionally, the driver now implements proper cleanup in
+    ``delete_port_postcommit()`` to remove localnet ports and release
+    dynamic segments when the last baremetal port using a segment is
+    deleted. This prevents orphaned localnet ports and ensures VLAN IDs
+    can be safely reused without configuration conflicts.

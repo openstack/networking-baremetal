@@ -345,9 +345,26 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 check_error=False)
 
             if existing_port:
-                LOG.debug("Localnet port %s already exists for network %s "
-                          "on physnet %s", port_name, network_id, physnet)
-                return
+                # Verify the VLAN tag matches - it may have changed if the
+                # segment was released and a new one allocated
+                existing_tag = existing_port.tag if hasattr(
+                    existing_port, 'tag') else None
+                # OVN returns tag as a list [vlan_id] or empty list []
+                if isinstance(existing_tag, list):
+                    existing_tag = existing_tag[0] if existing_tag else None
+
+                if existing_tag == vlan_id:
+                    LOG.debug("Localnet port %s already exists for network "
+                              "%s on physnet %s with correct VLAN tag %s",
+                              port_name, network_id, physnet, vlan_id)
+                    return
+                else:
+                    # VLAN tag mismatch - delete the stale port and recreate
+                    LOG.warning("Localnet port %s exists with stale VLAN tag "
+                                "%s (expected %s), recreating",
+                                port_name, existing_tag, vlan_id)
+                    ovn_client._nb_idl.lsp_del(port_name).execute(
+                        check_error=True)
 
             # Create the localnet port using atomic create_lswitch_port
             LOG.info("Creating localnet port %s for network %s to bridge "
@@ -370,7 +387,8 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 external_ids={},
                 type=ovn_const.LSP_TYPE_LOCALNET,
                 tag=vlan_id if vlan_id else [],
-                options=options
+                options=options,
+                enabled=True
             )
 
             # Execute the transaction
@@ -471,6 +489,39 @@ class L2vniMechanismDriver(api.MechanismDriver):
             provisioning_blocks.provisioning_complete(
                 context._plugin_context, context.current['id'],
                 resources.PORT, 'L2')
+
+    def delete_port_postcommit(self, context):
+        """Clean up localnet port when last baremetal port is deleted.
+
+        When a baremetal port is deleted, check if it was the last port
+        using the dynamic VLAN segment. If so, remove the localnet port
+        and release the segment to prevent VLAN ID reuse conflicts.
+        """
+        vnic_type = context.current[portbindings.VNIC_TYPE]
+        if vnic_type not in SUPPORTED_VNIC_TYPES:
+            return
+
+        # Check if this port had a bound segment
+        segment = context.bottom_bound_segment
+        if not segment or segment[api.NETWORK_TYPE] != p_const.TYPE_VLAN:
+            return
+
+        # Check if any other ports are still using this segment
+        if ports.PortBindingLevel.get_objects(
+                context.plugin_context, segment_id=segment[api.ID]
+        ):
+            # Other ports still using this segment, don't clean up
+            return
+
+        # This was the last port - clean up localnet port and release segment
+        physnet = segment.get(api.PHYSICAL_NETWORK)
+        if physnet:
+            self._remove_localnet_port(
+                context,
+                context.network.current['id'],
+                physnet
+            )
+        context.release_dynamic_segment(segment[api.ID])
 
     def bind_port(self, context):
         if context.current[portbindings.VNIC_TYPE] not in SUPPORTED_VNIC_TYPES:
