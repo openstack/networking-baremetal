@@ -381,8 +381,8 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
                        '_chassis_can_forward_physnet', autospec=True)
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
-                       '_ensure_router_gateway_chassis', autospec=True)
-    def test_ensure_localnet_port_success(self, mock_router_gw,
+                       '_get_local_chassis_name', autospec=True)
+    def test_ensure_localnet_port_success(self, mock_get_chassis_name,
                                           mock_can_forward,
                                           mock_get_client):
         """Test successful localnet port creation"""
@@ -390,6 +390,7 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
         mock_ovn_client = mock.Mock()
         mock_get_client.return_value = mock_ovn_client
         mock_can_forward.return_value = True
+        mock_get_chassis_name.return_value = 'test-chassis'
 
         # Mock that port doesn't exist
         mock_ovn_client._nb_idl.lsp_get.return_value.execute.return_value = (
@@ -402,13 +403,10 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
         self.driver._ensure_localnet_port(
             mock_context, network_id, physnet, vlan_id)
 
-        # Should create localnet port
+        # Should create localnet port with requested-chassis
         mock_ovn_client._nb_idl.create_lswitch_port.assert_called_once()
+        mock_ovn_client._nb_idl.db_set.assert_called_once()
         mock_ovn_client._transaction.assert_called_once()
-
-        # Should ensure router gateway chassis
-        mock_router_gw.assert_called_once_with(self.driver, mock_ovn_client,
-                                               network_id)
 
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
                        '_get_ovn_client', new_callable=mock.PropertyMock)
@@ -465,16 +463,22 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
                        '_get_ovn_client', new_callable=mock.PropertyMock)
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
                        '_chassis_can_forward_physnet', autospec=True)
-    def test_ensure_localnet_port_already_exists(self, mock_can_forward,
+    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
+                       '_get_local_chassis_name', autospec=True)
+    def test_ensure_localnet_port_already_exists(self,
+                                                 mock_get_chassis_name,
+                                                 mock_can_forward,
                                                  mock_get_client):
         """Test localnet port creation when port already exists"""
         mock_ovn_client = mock.Mock()
         mock_get_client.return_value = mock_ovn_client
         mock_can_forward.return_value = True
+        mock_get_chassis_name.return_value = 'test-chassis'
 
-        # Mock that port already exists with matching VLAN tag
+        # Mock that port already exists with matching VLAN tag and chassis
         existing_port = mock.Mock()
         existing_port.tag = [100]  # OVN stores tags as list
+        existing_port.options = {'requested-chassis': 'test-chassis'}
         mock_ovn_client._nb_idl.lsp_get.return_value.execute.return_value = (
             existing_port)
 
@@ -490,16 +494,20 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
                        '_get_ovn_client', new_callable=mock.PropertyMock)
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
                        '_chassis_can_forward_physnet', autospec=True)
+    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
+                       '_get_local_chassis_name', autospec=True)
     def test_ensure_localnet_port_vlan_tag_mismatch(
-            self, mock_can_forward, mock_get_client):
+            self, mock_get_chassis_name, mock_can_forward, mock_get_client):
         """Test localnet port recreation when VLAN tag changes"""
         mock_ovn_client = mock.Mock()
         mock_get_client.return_value = mock_ovn_client
         mock_can_forward.return_value = True
+        mock_get_chassis_name.return_value = 'test-chassis'
 
         # Mock that port exists with old VLAN tag 107
         existing_port = mock.Mock()
         existing_port.tag = [107]
+        existing_port.options = {'requested-chassis': 'test-chassis'}
         mock_ovn_client._nb_idl.lsp_get.return_value.execute.return_value = (
             existing_port)
 
@@ -705,45 +713,3 @@ class TestL2vniRouterGateway(tests_base.BaseTestCase):
         super(TestL2vniRouterGateway, self).setUp()
         self.driver = baremetal_l2vni_mapping.L2vniMechanismDriver()
         self.driver.initialize()
-
-    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
-                       '_get_local_chassis', autospec=True)
-    def test_ensure_router_gateway_chassis_disabled(self, mock_get_chassis):
-        """Test router gateway chassis when disabled by config"""
-        cfg.CONF.set_override('create_localnet_ports', False,
-                              group='baremetal_l2vni')
-
-        mock_ovn_client = mock.Mock()
-        self.driver._ensure_router_gateway_chassis(
-            mock_ovn_client, 'network-id')
-
-        # Should return early
-        mock_get_chassis.assert_not_called()
-
-    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
-                       '_get_local_chassis', autospec=True)
-    def test_ensure_router_gateway_chassis_no_chassis(self,
-                                                      mock_get_chassis):
-        """Test router gateway chassis when chassis not found"""
-        mock_get_chassis.return_value = None
-        mock_ovn_client = mock.Mock()
-
-        self.driver._ensure_router_gateway_chassis(
-            mock_ovn_client, 'network-id')
-
-        # Should log warning but not raise error
-
-    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
-                       '_get_local_chassis', autospec=True)
-    def test_ensure_router_gateway_chassis_no_nb_idl(self, mock_get_chassis):
-        """Test router gateway chassis when no northbound connection"""
-        mock_chassis = mock.Mock()
-        mock_chassis.name = 'test-chassis'
-        mock_get_chassis.return_value = mock_chassis
-
-        mock_ovn_client = mock.Mock(spec=[])  # No _nb_idl attribute
-
-        self.driver._ensure_router_gateway_chassis(
-            mock_ovn_client, 'network-id')
-
-        # Should return early without error

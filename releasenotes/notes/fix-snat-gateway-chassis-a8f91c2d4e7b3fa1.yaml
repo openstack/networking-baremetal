@@ -1,0 +1,11 @@
+---
+fixes:
+  - |
+    Fixes an issue in the baremetal-l2vni mechanism driver where
+    ``_ensure_router_gateway_chassis()`` was incorrectly setting
+    gateway_chassis on all router ports connected to L2VNI networks,
+    including internal router ports. This caused OVN to treat them as
+    distributed gateway ports, which prevented NAT flows from being
+    created when multiple such ports existed. The function has been
+    removed and replaced with a ``requested-chassis`` option on localnet
+    ports to ensure they remain pinned to the correct chassis.

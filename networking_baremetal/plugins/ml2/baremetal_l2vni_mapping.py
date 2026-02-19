@@ -215,92 +215,6 @@ class L2vniMechanismDriver(api.MechanismDriver):
             # Fail open - let the creation proceed and let OVN handle it
             return True
 
-    def _ensure_router_gateway_chassis(self, ovn_client, network_id):
-        """Ensure router ports for this network are bound to local chassis.
-
-        Finds logical router ports (LRPs) connected to this network and
-        ensures they have gateway chassis bindings. This is necessary for
-        router services (L3) to be available on the network node.
-
-        :param ovn_client: OVN client instance
-        :param network_id: Neutron network UUID
-        """
-        if not cfg.CONF.baremetal_l2vni.create_localnet_ports:
-            # If localnet port creation is disabled, skip gateway binding
-            return
-
-        try:
-            chassis = self._get_local_chassis(ovn_client)
-            if not chassis:
-                LOG.warning("Cannot bind router gateway - local chassis "
-                            "not found")
-                return
-
-            ls_name = ovn_utils.ovn_name(network_id)
-
-            # Find all logical router ports connected to this logical switch
-            if not hasattr(ovn_client, '_nb_idl'):
-                LOG.debug("No northbound connection available")
-                return
-
-            # Query all logical router ports
-            for lrp in ovn_client._nb_idl.tables.get(
-                    'Logical_Router_Port', {}).rows.values():
-                # Check if this LRP has a peer to our logical switch
-                # (LRP peers are typically switch router ports)
-                lrp_name = lrp.name
-
-                # Look for corresponding switch port that peers with this LRP
-                for lsp in ovn_client._nb_idl.tables.get(
-                        'Logical_Switch_Port', {}).rows.values():
-                    # Router ports on switches have type 'router' and
-                    # options['router-port'] pointing to the LRP
-                    if (hasattr(lsp, 'type')
-                            and lsp.type == 'router'
-                            and hasattr(lsp, 'options')
-                            and lsp.options.get('router-port') == lrp_name):
-
-                        # Check if this switch port belongs to our network
-                        # by checking the logical switch
-                        for ls in ovn_client._nb_idl.tables.get(
-                                'Logical_Switch', {}).rows.values():
-                            if (ls.name == ls_name
-                                    and hasattr(ls, 'ports')
-                                    and lsp.uuid in [p.uuid
-                                                     for p in ls.ports]):
-
-                                # Found a router port on our network
-                                LOG.debug("Found router port %s on network %s",
-                                          lrp_name, network_id)
-
-                                # Check if it has gateway chassis set
-                                if not lrp.gateway_chassis:
-                                    LOG.info("Setting gateway chassis for "
-                                             "router port %s to chassis %s",
-                                             lrp_name, chassis.name)
-
-                                    # Set gateway chassis using northbound API
-                                    cmd = ovn_client._nb_idl.lrp_set_gateway_chassis(  # noqa: E501
-                                        lrp_name,
-                                        chassis.name,
-                                        priority=1
-                                    )
-                                    ovn_client._transaction([cmd])
-
-                                    LOG.info("Successfully set gateway "
-                                             "chassis for router port %s",
-                                             lrp_name)
-                                else:
-                                    LOG.debug("Router port %s already has "
-                                              "gateway chassis configured",
-                                              lrp_name)
-                                break
-
-        except Exception as e:
-            LOG.error("Failed to ensure router gateway chassis for "
-                      "network %s: %s", network_id, e)
-            # Don't raise - this is an optimization, binding can still work
-
     def _ensure_localnet_port(self, context, network_id, physnet,
                               vlan_id: int):
         """Ensure a localnet port exists in OVN to bridge overlay to physnet.
@@ -345,6 +259,9 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 check_error=False)
 
             if existing_port:
+                # Get local chassis name for validation
+                chassis_name = self._get_local_chassis_name(ovn_client)
+
                 # Verify the VLAN tag matches - it may have changed if the
                 # segment was released and a new one allocated
                 existing_tag = existing_port.tag if hasattr(
@@ -353,16 +270,42 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 if isinstance(existing_tag, list):
                     existing_tag = existing_tag[0] if existing_tag else None
 
-                if existing_tag == vlan_id:
+                # Verify requested-chassis matches
+                existing_options = existing_port.options if hasattr(
+                    existing_port, 'options') else {}
+                if isinstance(existing_options, list):
+                    existing_options = {k: v for k, v in existing_options}
+                elif not isinstance(existing_options, dict):
+                    existing_options = {}
+                existing_chassis = existing_options.get('requested-chassis')
+
+                tag_mismatch = existing_tag != vlan_id
+                chassis_mismatch = (chassis_name
+                                    and existing_chassis != chassis_name)
+
+                if not tag_mismatch and not chassis_mismatch:
                     LOG.debug("Localnet port %s already exists for network "
-                              "%s on physnet %s with correct VLAN tag %s",
-                              port_name, network_id, physnet, vlan_id)
+                              "%s on physnet %s with correct VLAN tag %s "
+                              "and chassis %s",
+                              port_name, network_id, physnet, vlan_id,
+                              chassis_name)
                     return
                 else:
-                    # VLAN tag mismatch - delete the stale port and recreate
-                    LOG.warning("Localnet port %s exists with stale VLAN tag "
-                                "%s (expected %s), recreating",
-                                port_name, existing_tag, vlan_id)
+                    # VLAN tag or chassis mismatch - delete and recreate
+                    if tag_mismatch and chassis_mismatch:
+                        LOG.warning("Localnet port %s exists with stale "
+                                    "VLAN tag %s (expected %s) and "
+                                    "chassis %s (expected %s), recreating",
+                                    port_name, existing_tag, vlan_id,
+                                    existing_chassis, chassis_name)
+                    elif tag_mismatch:
+                        LOG.warning("Localnet port %s exists with stale "
+                                    "VLAN tag %s (expected %s), recreating",
+                                    port_name, existing_tag, vlan_id)
+                    else:
+                        LOG.warning("Localnet port %s exists with stale "
+                                    "chassis %s (expected %s), recreating",
+                                    port_name, existing_chassis, chassis_name)
                     ovn_client._nb_idl.lsp_del(port_name).execute(
                         check_error=True)
 
@@ -379,6 +322,16 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 ovn_const.LSP_OPTIONS_MCAST_FLOOD_REPORTS: 'true',
             }
 
+            # Get the local chassis name to pin the localnet port
+            # This ensures the localnet port stays on the same chassis,
+            # preventing disjointed behavior. Similar to trunk reconciler
+            # approach in:
+            # https://review.opendev.org/c/openstack/networking-baremetal/+/975333  # noqa: E501
+            chassis_name = self._get_local_chassis_name(ovn_client)
+            if not chassis_name:
+                LOG.warning("Cannot determine local chassis name, "
+                            "localnet port will not be chassis-pinned")
+
             # Create localnet port atomically
             cmd = ovn_client._nb_idl.create_lswitch_port(
                 lport_name=port_name,
@@ -391,14 +344,19 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 enabled=True
             )
 
-            # Execute the transaction
-            ovn_client._transaction([cmd])
+            # Pin localnet port to local chassis if we have a chassis name
+            if chassis_name:
+                cmd_set_options = ovn_client._nb_idl.db_set(
+                    'Logical_Switch_Port', port_name,
+                    ('options', {'requested-chassis': chassis_name,
+                                 **options})
+                )
+                ovn_client._transaction([cmd, cmd_set_options])
+            else:
+                ovn_client._transaction([cmd])
 
             LOG.info("Successfully created localnet port %s with VLAN tag %s",
                      port_name, vlan_id)
-
-            # Ensure router gateway ports are bound to this chassis
-            self._ensure_router_gateway_chassis(ovn_client, network_id)
 
         except Exception as e:
             LOG.error("Failed to create localnet port for network %s "
