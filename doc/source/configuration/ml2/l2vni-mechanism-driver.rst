@@ -61,14 +61,14 @@ The L2VNI mechanism driver operates as follows:
     └──────────────┘
 
 Switch Management Integration
-==============================
+=============================
 
 The L2VNI mechanism driver works in conjunction with switch management plugins
 (such as genericswitch) to provide complete end-to-end connectivity for
 baremetal servers on overlay networks.
 
 Role of Switch Management Plugins
-----------------------------------
+---------------------------------
 
 Switch management plugins handle the crucial task of configuring physical
 network switches to map VNI (VXLAN/Geneve Network Identifier) values to VLAN
@@ -89,7 +89,7 @@ When a baremetal port is created or deleted, the following workflow occurs:
    - Must be listed **last** in mechanism_drivers
 
 Mechanism Driver Ordering
---------------------------
+-------------------------
 
 The order of mechanism drivers in ``ml2_conf.ini`` is critical:
 
@@ -250,7 +250,7 @@ Deployment Guide
 ================
 
 Step 1: Enable the Mechanism Driver
-------------------------------------
+-----------------------------------
 
 Edit ``/etc/neutron/plugins/ml2/ml2_conf.ini``:
 
@@ -259,7 +259,7 @@ Edit ``/etc/neutron/plugins/ml2/ml2_conf.ini``:
    [ml2]
    mechanism_drivers = ovn,baremetal_l2vni,baremetal,genericswitch
    type_drivers = flat,vlan,vxlan,geneve
-   tenant_network_types = vxlan
+   project_network_types = vxlan
 
    [baremetal_l2vni]
    create_localnet_ports = True
@@ -280,7 +280,7 @@ Ensure VLAN ranges are configured:
    network_vlan_ranges = physnet1:100:200
 
 Step 3: Configure OVN Bridge Mappings
---------------------------------------
+-------------------------------------
 
 On each chassis that will handle baremetal traffic:
 
@@ -290,14 +290,14 @@ On each chassis that will handle baremetal traffic:
      external-ids:ovn-bridge-mappings=physnet1:br-provider
 
 Step 4: Restart Neutron Server
--------------------------------
+------------------------------
 
 .. code-block:: bash
 
    systemctl restart neutron-server
 
 Step 5: Create Overlay Network
--------------------------------
+------------------------------
 
 Create a tenant overlay network. You must explicitly specify the network type
 as VXLAN or Geneve (the only supported types for this driver):
@@ -324,7 +324,7 @@ as VXLAN or Geneve (the only supported types for this driver):
    plugin will not work as intended.
 
 Step 6: Create Baremetal Port
-------------------------------
+-----------------------------
 
 Create a baremetal port on the overlay network:
 
@@ -353,7 +353,7 @@ Troubleshooting
 ===============
 
 Port Binding Fails
--------------------
+------------------
 
 **Symptom**: Port remains in ``DOWN`` state or binding fails.
 
@@ -376,7 +376,7 @@ Port Binding Fails
    **Solution**: Expand VLAN range in ``ml2_type_vlan`` configuration.
 
 Localnet Port Not Created
---------------------------
+-------------------------
 
 **Symptom**: Port binds but traffic doesn't flow.
 
@@ -398,7 +398,7 @@ Localnet Port Not Created
    **Solution**: Configure ``ovn-bridge-mappings`` on at least one chassis.
 
 Router Attachment Breaks Connectivity
---------------------------------------
+-------------------------------------
 
 **Symptom**: Adding a router to the network breaks baremetal connectivity.
 
@@ -466,7 +466,7 @@ Advanced Topics
 ===============
 
 Multiple Physical Networks
----------------------------
+--------------------------
 
 You can use different physical networks for different ports:
 
