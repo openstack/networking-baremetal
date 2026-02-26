@@ -11,12 +11,17 @@
     required-projects:
       - openstack/networking-generic-switch
       - openstack/networking-baremetal
+      - openstack/sushy-tools
     vars:
       tempest_test_timeout: 2400
       devstack_plugins:
         networking-generic-switch: https://opendev.org/openstack/networking-generic-switch
         networking-baremetal: https://opendev.org/openstack/networking-baremetal
       devstack_localrc:
+        IRONIC_DEPLOY_DRIVER: redfish
+        IRONIC_ENABLED_BOOT_INTERFACES: redfish-virtual-media
+        IRONIC_ENABLED_HARDWARE_TYPES: redfish
+        IRONIC_ENABLED_MANAGEMENT_INTERFACES: redfish
         BUILD_TIMEOUT: 2400
         ENABLE_TENANT_VLANS: True
         IRONIC_DEFAULT_DEPLOY_INTERFACE: direct
