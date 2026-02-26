@@ -50,6 +50,11 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         self.context = object()
         self.conf = self.useFixture(config_fixture.Config())
         self.conf.config(transport_url='rabbit://user:password@host/')
+        # Register L2VNI config options and disable for these tests
+        from networking_baremetal.agent import agent_config
+        agent_config.register_l2vni_opts(self.conf.conf)
+        self.conf.config(group='l2vni',
+                         enable_l2vni_trunk_reconciliation=False)
 
     def test_get_template_node_state(self, mock_conn, mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()

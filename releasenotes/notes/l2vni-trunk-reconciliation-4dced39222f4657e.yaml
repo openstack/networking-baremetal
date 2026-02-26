@@ -1,0 +1,12 @@
+---
+features:
+  - |
+    Added an experimental L2VNI trunk reconciliation pattern to
+    ironic-neutron-agent. This feature automatically manages trunk
+    ports on network nodes for bridging OVN overlay networks to physical
+    infrastructure based on ha_chassis_group membership.
+
+    The feature is enabled by default. Disable it by setting
+    ``enable_l2vni_trunk_reconciliation = False`` in the ``[l2vni]`` section of
+    neutron.conf. See the L2VNI Trunk Reconciliation documentation for
+    configuration options and deployment guidance.
