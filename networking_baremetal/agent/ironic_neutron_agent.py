@@ -219,7 +219,15 @@ class BaremetalNeutronAgent(service.ServiceBase):
 
     def _report_state(self):
         node_states = {}
-        ironic_ports = self.ironic_client.ports(details=True)
+        conductor_groups_config = getattr(CONF, 'conductor_groups', None)
+        conductor_groups = getattr(
+            conductor_groups_config, 'conductor_groups', None) or []
+
+        if conductor_groups:
+            LOG.info("Using conductor groups filter: %s", conductor_groups)
+
+        ironic_ports = self.ironic_client.ports(
+            details=True, conductor_groups=conductor_groups)
 
         # NOTE: the above calls returns a generator, so we need to handle
         # exceptions that happen just before the first loop iteration, when

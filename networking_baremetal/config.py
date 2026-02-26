@@ -44,11 +44,26 @@ _device_opts = [
                       'be create and deleted on the device.')),
     ]
 
+_conductor_groups_opts = [
+    cfg.ListOpt('conductor_groups',
+                default=[],
+                help=('List of conductor groups this networking-baremetal '
+                      'instance should manage. If empty, all ports will be '
+                      'queried.')),
+]
+
 networking_baremetal_group = cfg.OptGroup(
     name='networking_baremetal',
     title='ML2 networking-baremetal options')
 CONF.register_group(networking_baremetal_group)
 CONF.register_opts(_opts, group=networking_baremetal_group)
+
+conductor_groups_opt_group = cfg.OptGroup(
+    name='conductor_groups',
+    title='ML2 networking-baremetal conductor groups filtering options')
+CONF.register_group(conductor_groups_opt_group)
+CONF.register_opts(_conductor_groups_opts, group=conductor_groups_opt_group)
+
 for device in CONF.networking_baremetal.enabled_devices:
     group = cfg.OptGroup(
         name=device,
@@ -58,12 +73,14 @@ for device in CONF.networking_baremetal.enabled_devices:
 
 
 def list_opts():
-    return [('networking_baremetal', _opts)]
+    return [('networking_baremetal', _opts),
+            ('conductor_groups', _conductor_groups_opts)]
 
 
 def list_common_device_driver_opts():
     return [('networking_baremetal', _opts),
-            ('common-example', _device_opts)]
+            ('common-example', _device_opts),
+            ('conductor_groups', _conductor_groups_opts)]
 
 
 def get_devices():

@@ -1,0 +1,7 @@
+---
+features:
+  - |
+    Adds support for filtering ports by conductor groups.
+    When ``[conductor_groups]conductor_groups`` is configured,
+    the agent will only query ports associated with nodes
+    in the specified list of conductor groups.
