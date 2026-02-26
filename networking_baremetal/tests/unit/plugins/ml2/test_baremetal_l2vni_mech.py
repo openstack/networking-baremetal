@@ -375,6 +375,26 @@ class TestL2vniPortBinding(tests_base.BaseTestCase):
         self.assertRaises(n_exc.InvalidInput,
                           self.driver.bind_port, context)
 
+    @mock.patch.object(baremetal_l2vni_mapping.LOG, 'debug',
+                       autospec=True)
+    def test_bind_port_logs_debug_info(self, mock_debug):
+        """Verify bind_port logs debug information."""
+        context = self._create_port_context()
+        segments = [{
+            api.ID: 'test-segment-id',
+            api.NETWORK_TYPE: n_const.TYPE_GENEVE,
+            api.SEGMENTATION_ID: 12345
+        }]
+        context.segments_to_bind = segments
+
+        with mock.patch.object(self.driver, '_bind_port_segment',
+                               autospec=True):
+            self.driver.bind_port(context)
+
+        # Verify debug logging was called multiple times
+        # (once for entry, once for binding overlay segment)
+        self.assertGreater(mock_debug.call_count, 0)
+
 
 class TestL2vniLocalnetPort(tests_base.BaseTestCase):
     """Test cases for localnet port management"""

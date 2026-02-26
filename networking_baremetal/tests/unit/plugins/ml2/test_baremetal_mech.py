@@ -195,6 +195,89 @@ class TestBaremetalMechDriver(base.AgentMechanismBaseTestCase):
         self.driver.delete_port_precommit(m_pc)
         self.driver.delete_port_postcommit(m_pc)
 
+    def test_bind_port_skips_when_overlay_segment_exists(self):
+        """Verify bind_port skips binding when network has overlay segment."""
+        m_pc = mock.create_autospec(driver_context.PortContext)
+        m_pc.current = {'id': 'test-port-id'}
+        mock_network = mock.Mock()
+        mock_network.network_segments = [
+            {api.NETWORK_TYPE: n_const.TYPE_GENEVE,
+             api.ID: 'geneve-seg-id'}
+        ]
+        m_pc.network = mock_network
+
+        with mock.patch.object(baremetal_mech.mech_agent.
+                               SimpleAgentMechanismDriverBase,
+                               'bind_port',
+                               autospec=True) as mock_super_bind:
+            self.driver.bind_port(m_pc)
+            # Should NOT call parent bind_port when overlay exists
+            mock_super_bind.assert_not_called()
+
+    def test_bind_port_proceeds_when_no_overlay_segment(self):
+        """Verify bind_port calls parent when no overlay segments exist."""
+        m_pc = mock.create_autospec(driver_context.PortContext)
+        m_pc.current = {'id': 'test-port-id'}
+        mock_network = mock.Mock()
+        mock_network.network_segments = [
+            {api.NETWORK_TYPE: n_const.TYPE_FLAT,
+             api.ID: 'flat-seg-id'}
+        ]
+        m_pc.network = mock_network
+
+        with mock.patch.object(baremetal_mech.mech_agent.
+                               SimpleAgentMechanismDriverBase,
+                               'bind_port',
+                               autospec=True) as mock_super_bind:
+            self.driver.bind_port(m_pc)
+            # Should call parent bind_port for flat/VLAN networks
+            # With autospec, first arg is self
+            mock_super_bind.assert_called_once_with(self.driver, m_pc)
+
+    def test_try_to_bind_segment_for_agent_skips_vlan_with_overlay(self):
+        """Verify VLAN binding skipped when overlay is first segment."""
+        m_pc = mock.create_autospec(driver_context.PortContext)
+        m_pc.current = {'id': 'test-port-id'}
+        mock_network = mock.Mock()
+        mock_network.network_segments = [
+            {api.NETWORK_TYPE: n_const.TYPE_GENEVE,
+             api.ID: 'geneve-seg-id'}
+        ]
+        m_pc.network = mock_network
+
+        segment = {api.NETWORK_TYPE: n_const.TYPE_VLAN,
+                   api.ID: 'vlan-seg-id'}
+        agent = mock.Mock()
+
+        result = self.driver.try_to_bind_segment_for_agent(
+            m_pc, segment, agent)
+
+        # Should return False to skip VLAN binding
+        self.assertFalse(result)
+
+    def test_try_to_bind_segment_for_agent_proceeds_with_flat(self):
+        """Verify normal binding proceeds with flat network."""
+        m_pc = mock.create_autospec(driver_context.PortContext)
+        m_pc.current = {'id': 'test-port-id'}
+        mock_network = mock.Mock()
+        mock_network.network_segments = [
+            {api.NETWORK_TYPE: n_const.TYPE_FLAT,
+             api.ID: 'flat-seg-id'}
+        ]
+        m_pc.network = mock_network
+
+        segment = {api.NETWORK_TYPE: n_const.TYPE_FLAT,
+                   api.ID: 'flat-seg-id'}
+        agent = mock.Mock()
+
+        with mock.patch.object(self.driver, 'check_segment_for_agent',
+                               return_value=False,
+                               autospec=True) as mock_check:
+            self.driver.try_to_bind_segment_for_agent(
+                m_pc, segment, agent)
+            # Should proceed to check_segment_for_agent
+            mock_check.assert_called_once_with(segment, agent)
+
 
 class TestBaremetalMechDriverFakeDriver(base.AgentMechanismBaseTestCase):
     VIF_TYPE = portbindings.VIF_TYPE_OTHER

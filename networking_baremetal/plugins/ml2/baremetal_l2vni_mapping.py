@@ -526,9 +526,14 @@ class L2vniMechanismDriver(api.MechanismDriver):
         # VLAN segment.
         for segment in context.segments_to_bind:
             if segment[api.NETWORK_TYPE] in EVPN_TYPES:
+                LOG.debug("L2VNI binding overlay segment %s for port %s",
+                          segment[api.ID], context.current['id'])
                 self._bind_port_segment(context, segment)
                 # Fast out to avoid walking the rest of the list
                 break
+        else:
+            LOG.debug("L2VNI no overlay segments to bind for port %s",
+                      context.current['id'])
 
     def _bind_port_segment(self, context, bind_segment):
         """Dynamically allocates a VLAN segment to bind the segment to."""

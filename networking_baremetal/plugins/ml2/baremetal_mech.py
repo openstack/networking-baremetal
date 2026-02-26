@@ -73,6 +73,36 @@ class BaremetalMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
         """
         return agent['configurations'].get('bridge_mappings', {})
 
+    def bind_port(self, context):
+        """Bind port, skipping hierarchical overlay→VLAN scenarios.
+
+        Check if this is a hierarchical binding scenario where an overlay
+        segment exists on the network. If so, skip binding to allow other
+        drivers like genericswitch to handle the VLAN binding.
+        """
+        # Check if this is hierarchical binding by seeing if any static
+        # network segment is overlay type. If so, skip binding entirely
+        # to let baremetal-l2vni handle overlay and genericswitch handle
+        # VLAN levels.
+        network_segments = context.network.network_segments
+        has_overlay = any(
+            seg[api.NETWORK_TYPE] in [n_const.TYPE_VXLAN,
+                                      n_const.TYPE_GENEVE]
+            for seg in network_segments
+        )
+        if has_overlay:
+            # This is hierarchical binding - skip to let other drivers
+            # handle it (baremetal-l2vni for overlay, genericswitch for
+            # VLAN)
+            LOG.debug("Skipping baremetal driver bind_port for port %s "
+                      "- network has overlay segment, hierarchical "
+                      "binding scenario",
+                      context.current['id'])
+            return
+
+        # Not a hierarchical scenario, proceed with normal agent binding
+        super(BaremetalMechanismDriver, self).bind_port(context)
+
     def create_network_precommit(self, context):
         """Allocate resources for a new network.
 
@@ -432,6 +462,23 @@ class BaremetalMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
         call context.set_binding() with appropriate values and then
         return True. Otherwise, it must return False.
         """
+        # Skip hierarchical overlay→VLAN binding scenarios.
+        # If we're being asked to bind a VLAN segment and the first segment
+        # on the network is overlay (vxlan/geneve), this is hierarchical
+        # binding and other drivers like genericswitch should handle it.
+        network_segments = context.network.network_segments
+        if (segment[api.NETWORK_TYPE] == n_const.TYPE_VLAN
+                and network_segments
+                and network_segments[0][api.NETWORK_TYPE]
+                in [n_const.TYPE_VXLAN, n_const.TYPE_GENEVE]):
+            LOG.debug("Skipping baremetal driver binding for VLAN "
+                      "segment %s on port %s - first network segment is "
+                      "overlay type %s (hierarchical binding scenario)",
+                      segment[api.ID],
+                      context.current['id'],
+                      network_segments[0][api.NETWORK_TYPE])
+            return False
+
         if not self.check_segment_for_agent(segment, agent):
             return False
 
