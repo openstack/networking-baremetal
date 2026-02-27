@@ -27,6 +27,14 @@ Configuration Guide
 
   configuration/index
 
+Administrator Guide
+===================
+
+.. toctree::
+  :maxdepth: 2
+
+  admin/ha-chassis-group-alignment
+
 Contributor Guide
 =================
 

@@ -34,6 +34,7 @@ def fake_notification():
 class TestHashRingMemberManagerNotificationEndpoint(base.BaseTestCase):
     def setUp(self):
         super(TestHashRingMemberManagerNotificationEndpoint, self).setUp()
+        # Create instance without agent_id for backward compatibility tests
         self.member_manager = (
             ironic_neutron_agent.HashRingMemberManagerNotificationEndpoint())
         self.member_manager.members = []
