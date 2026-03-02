@@ -512,9 +512,8 @@ class BaremetalNeutronAgent(service.ServiceBase):
                         LOG.info("Successfully connected to OVN Southbound "
                                  "database")
                 except Exception:
-                    LOG.warning("Failed to connect to OVN databases, "
-                                "skipping reconciliation cycle. Will retry "
-                                "on next cycle.", exc_info=True)
+                    LOG.info("OVN databases not available, skipping L2VNI "
+                             "reconciliation cycle. Will retry on next cycle.")
                     return
 
             self.trunk_manager.reconcile()

@@ -208,7 +208,9 @@ def get_ovn_nb_idl():
             LOG.info("Connected to OVN Northbound database")
 
         except Exception:
-            LOG.exception("Failed to connect to OVN Northbound database")
+            LOG.info("Unable to connect to OVN Northbound database at %s: "
+                     "(OVN may not be configured)", conn_string,
+                     exc_info=True)
             raise
 
     return _OVN_NB_IDL
@@ -250,7 +252,9 @@ def get_ovn_sb_idl():
             LOG.info("Connected to OVN Southbound database")
 
         except Exception:
-            LOG.exception("Failed to connect to OVN Southbound database")
+            LOG.info("Unable to connect to OVN Southbound database at %s: "
+                     "(OVN may not be configured)", conn_string,
+                     exc_info=True)
             raise
 
     return _OVN_SB_IDL
