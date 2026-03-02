@@ -86,21 +86,21 @@ Components and Data Flow
                      │
     ┌────────────────▼────────────────────────────────────────┐
     │           ironic-neutron-agent                          │
-    │                                                          │
+    │                                                         │
     │  ┌─────────────────────────────────────────┐            │
     │  │   L2VNI Trunk Manager                   │            │
-    │  │                                          │            │
+    │  │                                         │            │
     │  │  1. Discover chassis in ha_groups       │            │
     │  │  2. Calculate required VLANs            │            │
     │  │  3. Reconcile trunk subports            │            │
     │  │  4. Cleanup orphaned resources          │            │
     │  └────┬────────────────────────────────────┘            │
-    │       │                                                  │
-    └───────┼──────────────────────────────────────────────────┘
+    │       │                                                 │
+    └───────┼─────────────────────────────────────────────────┘
             │
             │ Neutron API calls
             │
-    ┌───────▼──────────────────────────────────────────────────┐
+    ┌───────▼───────────────────────────────────────────────────┐
     │                    Neutron Server                         │
     │  - Creates/deletes trunk ports                            │
     │  - Manages subports                                       │
@@ -109,7 +109,7 @@ Components and Data Flow
                      │
                      │ ML2 mechanism drivers
                      │
-    ┌────────────────▼──────────────────────────────────────────┐
+    ┌────────────────▼───────────────────────────────────────────┐
     │              Physical Switch Plugins                       │
     │  (e.g., genericswitch)                                     │
     │  - Configures trunk ports on physical switches             │
@@ -188,6 +188,15 @@ automatically.
 This information is included in subport binding profiles to enable switch
 management plugins (e.g., genericswitch) to configure the physical switch
 ports correctly.
+
+.. warning::
+   Where the cache may be problematic is if you are re-cabling networker
+   nodes on a fairly regular basis. While fundimentally such an action
+   *is* a breaking change in itself in any operating environment, the
+   cache will retain details for up to an hour and may also reflect
+   incorrect details if the data sources (Ironic, or the YAML configuration)
+   are not updated. Neutron guidance around changing configuration
+   in such cases is also to change the agents which will reset the cache.
 
 Prerequisites
 =============

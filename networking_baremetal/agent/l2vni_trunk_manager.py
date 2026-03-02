@@ -165,8 +165,18 @@ class L2VNITrunkManager:
             # Clean up unused infrastructure
             self._cleanup_unused_infrastructure()
 
-        except Exception:
+        except (sdkexc.SDKException, AttributeError, KeyError, TypeError,
+                ValueError, IndexError):
             LOG.exception("Failed to reconcile L2VNI trunks")
+            # Don't re-raise - let reconciliation continue on next interval
+        except Exception:
+            # This broad exception handler is intentional. The reconcile()
+            # method is called periodically by the agent and must be resilient
+            # to any unexpected errors to prevent the reconciliation loop from
+            # crashing. The specific exception handlers above catch known error
+            # types; this catches anything else that slips through.
+            LOG.exception("Unexpected error during L2VNI trunk "
+                          "reconciliation.")
             # Don't re-raise - let reconciliation continue on next interval
 
     def _ensure_infrastructure_networks(self):
@@ -309,7 +319,7 @@ class L2VNITrunkManager:
 
             return ha_groups
 
-        except Exception:
+        except (AttributeError, KeyError):
             LOG.exception("Failed to get ha_chassis_groups from OVN")
             return []
 
@@ -376,7 +386,7 @@ class L2VNITrunkManager:
                     for physnet in physnets:
                         chassis_physnets.add((system_id, physnet))
 
-        except Exception:
+        except (AttributeError, KeyError):
             LOG.exception("Failed to get chassis physnets")
 
         return chassis_physnets
@@ -530,7 +540,7 @@ class L2VNITrunkManager:
                     if chassis.name == chassis_name:
                         return chassis
 
-        except Exception:
+        except (AttributeError, KeyError):
             LOG.exception("Failed to get chassis %s", chassis_name)
 
         return None
@@ -635,8 +645,8 @@ class L2VNITrunkManager:
                                 if ls.name == ls_name and lsp in ls.ports:
                                     return True
 
-        except Exception:
-            LOG.exception("Failed to check for localnet port on network %s",
+        except (AttributeError, KeyError):
+            LOG.exception("Failed to check for localnet port on network %s.",
                           network_id)
 
         return False
@@ -663,8 +673,9 @@ class L2VNITrunkManager:
                         # Chassis name IS the system-id
                         chassis_set.add(chassis.name)
 
-        except Exception:
-            LOG.exception("Failed to get chassis with physnet %s", physnet)
+        except (AttributeError, KeyError):
+            LOG.exception("Failed to get chassis with physnet %s",
+                          physnet)
 
         return chassis_set
 
@@ -707,7 +718,7 @@ class L2VNITrunkManager:
                                             chassis_set.update(
                                                 self._get_chassis_for_lrp(lrp))
 
-        except Exception:
+        except (AttributeError, KeyError):
             LOG.exception("Failed to get chassis for router ports on "
                           "network %s", network_id)
 
@@ -740,8 +751,9 @@ class L2VNITrunkManager:
                         # Chassis name IS the system-id
                         chassis_set.add(chassis.name)
 
-        except Exception:
-            LOG.exception("Failed to get chassis for LRP %s", lrp.name)
+        except (AttributeError, KeyError):
+            LOG.exception("Failed to get chassis for LRP %s",
+                          lrp.name)
 
         return chassis_set
 
@@ -970,9 +982,9 @@ class L2VNITrunkManager:
 
             return None
 
-        except Exception:
+        except (AttributeError, KeyError):
             LOG.exception("Failed to get LLDP data from OVN for chassis %s "
-                          "physnet %s", system_id, physnet)
+                          "physnet %s.", system_id, physnet)
             return None
 
     def _fetch_ironic_data_for_system_id(self, system_id):
@@ -1036,7 +1048,7 @@ class L2VNITrunkManager:
             LOG.debug("No Ironic node found with system_id %s", system_id)
             return None
 
-        except Exception:
+        except (sdkexc.SDKException, AttributeError, KeyError):
             LOG.exception("Failed to fetch Ironic data for system_id %s",
                           system_id)
             return None
@@ -1100,9 +1112,10 @@ class L2VNITrunkManager:
 
             return None
 
-        except Exception:
+        except (KeyError, AttributeError):
             LOG.exception("Failed to get local_link_connection from Ironic "
-                          "for chassis %s physnet %s", system_id, physnet)
+                          "for chassis %s physnet %s.", system_id,
+                          physnet)
             return None
 
     def _get_local_link_from_config(self, system_id, physnet):
@@ -1159,8 +1172,8 @@ class L2VNITrunkManager:
             # Clean up orphaned ha_chassis_group networks
             self._cleanup_orphaned_networks()
 
-        except Exception:
-            LOG.exception("Failed to clean up unused L2VNI infrastructure")
+        except (sdkexc.SDKException, AttributeError, KeyError):
+            LOG.exception("Failed to clean up unused L2VNI infrastructure.")
 
     def _cleanup_orphaned_trunks(self, valid_chassis_physnets):
         """Clean up trunks and anchor ports for deleted chassis.
@@ -1226,7 +1239,7 @@ class L2VNITrunkManager:
                             LOG.warning("Failed to delete anchor port %s",
                                         anchor_port_id)
 
-        except Exception:
+        except (sdkexc.SDKException, AttributeError):
             LOG.exception("Failed to cleanup orphaned trunks")
 
     def _cleanup_orphaned_networks(self):
@@ -1270,5 +1283,5 @@ class L2VNITrunkManager:
                             LOG.exception("Failed to delete network %s",
                                           network.id)
 
-        except Exception:
+        except (sdkexc.SDKException, AttributeError):
             LOG.exception("Failed to cleanup orphaned networks")
