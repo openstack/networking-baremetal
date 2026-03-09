@@ -38,7 +38,9 @@ baremetal_l2vni_opts = [
                 help='Automatically create OVN localnet ports to bridge '
                      'VXLAN overlay networks to physical networks for '
                      'baremetal. Disable if localnet ports are managed '
-                     'externally or not needed.'),
+                     'externally or not needed. You likely need this '
+                     'set to True unless your doing a pure BGP EVPN '
+                     'setup with Neutron.'),
     cfg.StrOpt('default_physical_network',
                default=None,
                help='Default physical network name to use for baremetal '
