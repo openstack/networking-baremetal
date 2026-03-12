@@ -204,16 +204,9 @@ class L2vniMechanismDriver(api.MechanismDriver):
                       len(chassis_list), physnet)
 
             for chassis in chassis_list:
-                # Check bridge mappings in external_ids first
-                bridge_mappings = chassis.external_ids.get(
+                # Get bridge mappings from other_config (OVN 20.06+)
+                bridge_mappings = chassis.other_config.get(
                     'ovn-bridge-mappings', '')
-
-                # Fallback to other_config if external_ids is empty
-                if not bridge_mappings and hasattr(chassis, 'other_config'):
-                    bridge_mappings = chassis.other_config.get(
-                        'ovn-bridge-mappings', '')
-                    LOG.debug("Using bridge_mappings from other_config: %s",
-                              bridge_mappings)
 
                 # Format is "physnet1:br-provider,physnet2:br-ex"
                 physnets = [mapping.split(':')[0].strip()

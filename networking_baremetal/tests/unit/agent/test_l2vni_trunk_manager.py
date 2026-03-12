@@ -49,11 +49,12 @@ class FakeChassis:
     but use system_id as the name since that's what code expects.
     """
 
-    def __init__(self, name, system_id, external_ids=None):
+    def __init__(self, name, system_id, external_ids=None, other_config=None):
         # In real OVN, chassis.name IS the system-id
         # Use system_id as the name to match real behavior
         self.name = system_id
         self.external_ids = external_ids or {}
+        self.other_config = other_config or {}
         # Don't store system-id in external_ids - that's not where it is
         # in real OVN (it's the name field)
 
@@ -392,8 +393,9 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         """Test trunk discovery finds existing L2VNI trunks."""
         # Setup HA chassis group
         # In real OVN, chassis name IS the system-id
-        chassis = FakeChassis('chassis-1', 'system-1',
-                              {'ovn-bridge-mappings': 'physnet1:br-ex'})
+        chassis = FakeChassis(
+            'chassis-1', 'system-1',
+            other_config={'ovn-bridge-mappings': 'physnet1:br-ex'})
         ha_chassis = FakeHAChassis('system-1')
         ha_group = FakeHAChassisGroup('ha_group_1', [ha_chassis])
         self.mock_ovn_nb.tables['HA_Chassis_Group'].rows.values\
@@ -444,9 +446,10 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         mock_ovn_name.return_value = 'neutron-network-id-1'
 
         # Setup HA chassis group
-        chassis1 = FakeChassis('chassis-1', 'system-id-1',
-                               {'ovn-bridge-mappings':
-                                'physnet1:br-ex,physnet2:br-data'})
+        chassis1 = FakeChassis(
+            'chassis-1', 'system-id-1',
+            other_config={'ovn-bridge-mappings':
+                          'physnet1:br-ex,physnet2:br-data'})
         ha_chassis = FakeHAChassis('system-id-1')
         ha_group = FakeHAChassisGroup('ha_group_1', [ha_chassis])
         self.mock_ovn_nb.tables['HA_Chassis_Group'].rows.values\
@@ -574,7 +577,7 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         """Test local_link_connection retrieval from OVN LLDP data."""
         # Mock chassis with bridge mappings
         chassis = FakeChassis('chassis-1', 'system-id-1')
-        chassis.external_ids['ovn-bridge-mappings'] = 'physnet1:br-physnet1'
+        chassis.other_config['ovn-bridge-mappings'] = 'physnet1:br-physnet1'
         self.mock_ovn_sb.tables['Chassis'].rows.values\
             .return_value = [chassis]
 
@@ -951,7 +954,7 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         """Test VLAN calculation handles missing segment data."""
         # Setup minimal OVN data
         FakeChassis('chassis-1', 'system-1',
-                    {'ovn-bridge-mappings': 'physnet1:br-ex'})
+                    other_config={'ovn-bridge-mappings': 'physnet1:br-ex'})
         ha_chassis = FakeHAChassis('system-1')
         ha_group = FakeHAChassisGroup('group1', [ha_chassis])
         self.mock_ovn_nb.tables['HA_Chassis_Group'].rows.values\

@@ -115,7 +115,7 @@ class TestL2vniMechanismDriver(tests_base.BaseTestCase):
         # Mock chassis without the requested physnet
         mock_chassis = mock.Mock()
         mock_chassis.name = 'test-chassis'
-        mock_chassis.external_ids = {
+        mock_chassis.other_config = {
             'ovn-bridge-mappings': 'physnet1:br-provider'
         }
 

@@ -379,7 +379,7 @@ class L2VNITrunkManager:
                     # The chassis name IS the system-id (UUID)
                     system_id = chassis.name
 
-                    bridge_mappings = chassis.external_ids.get(
+                    bridge_mappings = chassis.other_config.get(
                         'ovn-bridge-mappings', '')
                     physnets = self._parse_bridge_mappings(bridge_mappings)
 
@@ -665,7 +665,7 @@ class L2VNITrunkManager:
 
             if 'Chassis' in self.ovn_sb_idl.tables:
                 for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
-                    bridge_mappings = chassis.external_ids.get(
+                    bridge_mappings = chassis.other_config.get(
                         'ovn-bridge-mappings', '')
                     physnets = self._parse_bridge_mappings(bridge_mappings)
 
@@ -943,7 +943,7 @@ class L2VNITrunkManager:
                 return None
 
             # Find port on this chassis that maps to the physnet
-            bridge_mappings = chassis.external_ids.get(
+            bridge_mappings = chassis.other_config.get(
                 'ovn-bridge-mappings', '')
             physnet_to_bridge = {}
             for mapping in bridge_mappings.split(','):
