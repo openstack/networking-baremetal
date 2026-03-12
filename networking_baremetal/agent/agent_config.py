@@ -41,8 +41,11 @@ L2VNI_OPTS = [
         help='Path to YAML file containing network node trunk port '
              'configuration. Used as fallback when trunk configuration is '
              'not available from OVN LLDP data or Ironic. The file should '
-             'define system_id, physical_network, and local_link_connection '
-             'information for each network node.'),
+             'define system_id or hostname, physical_network, and '
+             'local_link_connection information for each network node. '
+             'Network nodes can be identified by either system_id (OVN '
+             'chassis UUID) or hostname (OVN chassis hostname) for easier '
+             'configuration.'),
     cfg.BoolOpt(
         'l2vni_auto_create_networks',
         default=True,

@@ -1118,10 +1118,26 @@ class L2VNITrunkManager:
                           physnet)
             return None
 
+    def _get_local_link_from_node_config(self, node, physnet):
+        """Get local_link_connection from a network node config entry.
+
+        :param node: Network node config dict from YAML
+        :param physnet: Physical network name
+        :returns: dict with local_link_connection or None
+        """
+        for trunk_config in node.get('trunks', []):
+            if trunk_config.get('physical_network') == physnet:
+                return trunk_config.get('local_link_connection')
+        return None
+
     def _get_local_link_from_config(self, system_id, physnet):
         """Get local_link_connection from YAML config file.
 
-        :param system_id: Chassis system-id
+        Matches network nodes by system_id (chassis UUID) or hostname.
+        This allows the YAML config to use either the predictable hostname
+        or the exact chassis UUID.
+
+        :param system_id: Chassis system-id (UUID)
         :param physnet: Physical network name
         :returns: dict with local_link_connection or None
         """
@@ -1131,13 +1147,40 @@ class L2VNITrunkManager:
         if not self._config_cache:
             return None
 
+        # Try to match by system_id first (exact UUID match)
         for node in self._config_cache.get('network_nodes', []):
-            if node.get('system_id') != system_id:
-                continue
+            if node.get('system_id') == system_id:
+                return self._get_local_link_from_node_config(node, physnet)
 
-            for trunk_config in node.get('trunks', []):
-                if trunk_config.get('physical_network') == physnet:
-                    return trunk_config.get('local_link_connection')
+        # No system_id match found, try hostname fallback
+        chassis_hostname = self._get_chassis_hostname(system_id)
+        if chassis_hostname:
+            for node in self._config_cache.get('network_nodes', []):
+                if node.get('hostname') == chassis_hostname:
+                    LOG.debug("Matched chassis %s by hostname %s in config",
+                              system_id, chassis_hostname)
+                    return self._get_local_link_from_node_config(node, physnet)
+
+        return None
+
+    def _get_chassis_hostname(self, system_id):
+        """Get hostname for a chassis by system-id.
+
+        :param system_id: Chassis system-id (UUID)
+        :returns: Hostname string or None
+        """
+        try:
+            if not hasattr(self.ovn_sb_idl, 'tables'):
+                return None
+
+            if 'Chassis' not in self.ovn_sb_idl.tables:
+                return None
+
+            for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
+                if chassis.name == system_id and hasattr(chassis, 'hostname'):
+                    return chassis.hostname
+        except (AttributeError, KeyError):
+            LOG.debug("Failed to get hostname for chassis %s", system_id)
 
         return None
 

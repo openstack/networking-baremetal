@@ -49,12 +49,14 @@ class FakeChassis:
     but use system_id as the name since that's what code expects.
     """
 
-    def __init__(self, name, system_id, external_ids=None, other_config=None):
+    def __init__(self, name, system_id, external_ids=None, other_config=None,
+                 hostname=None):
         # In real OVN, chassis.name IS the system-id
         # Use system_id as the name to match real behavior
         self.name = system_id
         self.external_ids = external_ids or {}
         self.other_config = other_config or {}
+        self.hostname = hostname
         # Don't store system-id in external_ids - that's not where it is
         # in real OVN (it's the name field)
 
@@ -800,6 +802,35 @@ network_nodes:
         self.assertIsNotNone(result)
         self.assertEqual('11:22:33:44:55:66', result['switch_id'])
         self.assertEqual('Ethernet1', result['port_id'])
+
+    @mock.patch('builtins.open', new_callable=mock.mock_open,
+                read_data='''
+network_nodes:
+  - hostname: test-hostname
+    trunks:
+      - physical_network: physnet1
+        local_link_connection:
+          switch_id: "aa:bb:cc:dd:ee:ff"
+          port_id: "Ethernet2"
+          switch_info: "hostname-switch"
+''')
+    def test_get_local_link_from_config_hostname_fallback(self, mock_file):
+        """Test local_link_connection retrieval using hostname fallback."""
+        cfg.CONF.set_override('l2vni_network_nodes_config',
+                              '/etc/neutron/l2vni_network_nodes.yaml',
+                              group='l2vni')
+
+        # Mock chassis with hostname
+        chassis = FakeChassis('chassis-1', 'system-uuid-123')
+        chassis.hostname = 'test-hostname'
+        self.mock_ovn_sb.tables['Chassis'].rows.values.return_value = [chassis]
+
+        result = self.manager._get_local_link_from_config(
+            'system-uuid-123', 'physnet1')
+
+        self.assertIsNotNone(result)
+        self.assertEqual('aa:bb:cc:dd:ee:ff', result['switch_id'])
+        self.assertEqual('Ethernet2', result['port_id'])
 
     def test_cleanup_orphaned_trunks_removes_deleted_chassis(self):
         """Test cleanup removes trunks for deleted chassis."""

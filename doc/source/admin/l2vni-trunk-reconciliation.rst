@@ -466,7 +466,8 @@ The file is in YAML format at the path specified by
 .. code-block:: yaml
 
    network_nodes:
-     - system_id: compute-1
+     # Using system_id (explicit, no hostname lookup needed)
+     - system_id: 0f563ca5-4a94-4d26-a21e-a4ce3dbcd372
        trunks:
          - physical_network: physnet1
            local_link_connection:
@@ -479,7 +480,8 @@ The file is in YAML format at the path specified by
              port_id: "GigabitEthernet1/0/1"
              switch_info: "tor-switch-2"
 
-     - system_id: compute-2
+     # Using hostname
+     - hostname: network-node-1.example.com
        trunks:
          - physical_network: physnet1
            local_link_connection:
@@ -493,15 +495,24 @@ Field Descriptions
 **network_nodes** (required)
     List of network node configurations
 
-**system_id** (required)
-    The OVN chassis system-id (from ``external-ids:system-id`` in OVS).
-    This must match the system-id in OVN Southbound Chassis table.
+**system_id** or **hostname** (one required)
+    Network nodes can be identified by either:
 
-    You can find system-ids with:
+    - **system_id**: The OVN chassis UUID (chassis.name in OVN Southbound).
+      Explicit and requires no lookup. Takes priority if both are specified.
+
+    - **hostname**: The OVN chassis hostname (chassis.hostname in OVN Southbound).
+      Human-readable and survives chassis reinstalls, but requires an OVN SB
+      lookup to resolve to the chassis UUID.
+
+    You can find both values with:
 
     .. code-block:: bash
 
-       ovn-sbctl list Chassis | grep system-id
+       ovn-sbctl --columns=name,hostname list Chassis
+
+    Choose based on your needs: ``system_id`` for explicitness and performance,
+    ``hostname`` for maintainability and readability.
 
 **trunks** (required)
     List of trunk configurations for this network node
@@ -625,13 +636,17 @@ If LLDP data is not available in OVN, create
 .. code-block:: yaml
 
    network_nodes:
-     - system_id: network-node-1
+     - hostname: network-node-1.example.com
        trunks:
          - physical_network: physnet1
            local_link_connection:
              switch_id: "00:11:22:33:44:55"
              port_id: "Ethernet1/1"
              switch_info: "tor-switch-1"
+
+.. note::
+   You can use either ``hostname`` or ``system_id`` (OVN chassis UUID).
+   To find both values, run: ``ovn-sbctl --columns=name,hostname list Chassis``
 
 Step 4: Restart ironic-neutron-agent
 -------------------------------------
