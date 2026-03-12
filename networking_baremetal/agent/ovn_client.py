@@ -20,6 +20,8 @@ from ovs.db import idl as ovs_idl
 from ovs import stream
 from ovsdbapp.backend.ovs_idl import connection
 from ovsdbapp.backend.ovs_idl import idlutils
+from ovsdbapp.schema.ovn_northbound import impl_idl as nb_impl_idl
+from ovsdbapp.schema.ovn_southbound import impl_idl as sb_impl_idl
 
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
@@ -175,7 +177,7 @@ def _get_ovn_ovsdb_timeout():
 def get_ovn_nb_idl():
     """Get OVN Northbound IDL connection.
 
-    :returns: OVN NB IDL instance
+    :returns: OVN NB API instance
     """
     global _OVN_NB_IDL
 
@@ -203,8 +205,8 @@ def get_ovn_nb_idl():
             )
             ovn_conn.start()
 
-            # Store the raw IDL for direct table access
-            _OVN_NB_IDL = idl
+            # Create and store the NB API implementation
+            _OVN_NB_IDL = nb_impl_idl.OvnNbApiIdlImpl(ovn_conn)
             LOG.info("Connected to OVN Northbound database")
 
         except Exception:
@@ -219,7 +221,7 @@ def get_ovn_nb_idl():
 def get_ovn_sb_idl():
     """Get OVN Southbound IDL connection.
 
-    :returns: OVN SB IDL instance
+    :returns: OVN SB API instance
     """
     global _OVN_SB_IDL
 
@@ -247,8 +249,8 @@ def get_ovn_sb_idl():
             )
             ovn_conn.start()
 
-            # Store the raw IDL for direct table access
-            _OVN_SB_IDL = idl
+            # Create and store the SB API implementation
+            _OVN_SB_IDL = sb_impl_idl.OvnSbApiIdlImpl(ovn_conn)
             LOG.info("Connected to OVN Southbound database")
 
         except Exception:

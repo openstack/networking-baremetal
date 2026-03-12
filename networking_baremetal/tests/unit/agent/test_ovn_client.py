@@ -58,6 +58,7 @@ class TestOVNClient(tests_base.BaseTestCase):
         self.assertIsNone(ovn_client._OVN_NB_IDL)
         self.assertIsNone(ovn_client._OVN_SB_IDL)
 
+    @mock.patch.object(ovn_client, 'nb_impl_idl', autospec=True)
     @mock.patch.object(ovn_client, 'ovs_idl', autospec=True)
     @mock.patch.object(ovn_client, 'connection', autospec=True)
     @mock.patch.object(ovn_client, 'idlutils', autospec=True)
@@ -65,12 +66,17 @@ class TestOVNClient(tests_base.BaseTestCase):
             self,
             mock_idlutils,
             mock_connection,
-            mock_ovs_idl):
+            mock_ovs_idl,
+            mock_nb_impl):
         """Test OVN Northbound IDL connection creation."""
         mock_helper = mock.Mock()
         mock_idlutils.get_schema_helper = mock.Mock(return_value=mock_helper)
         mock_idl = mock.Mock()
         mock_ovs_idl.Idl.return_value = mock_idl
+        mock_conn = mock.Mock()
+        mock_connection.Connection.return_value = mock_conn
+        mock_api = mock.Mock()
+        mock_nb_impl.OvnNbApiIdlImpl.return_value = mock_api
 
         result = ovn_client.get_ovn_nb_idl()
 
@@ -80,10 +86,12 @@ class TestOVNClient(tests_base.BaseTestCase):
         mock_helper.register_all.assert_called_once()
         mock_ovs_idl.Idl.assert_called_once_with(
             'tcp:127.0.0.1:6641', mock_helper)
+        mock_conn.start.assert_called_once()
 
-        # Should return raw IDL instance
-        self.assertEqual(result, mock_idl)
+        # Should return NB API instance
+        self.assertEqual(result, mock_api)
 
+    @mock.patch.object(ovn_client, 'nb_impl_idl', autospec=True)
     @mock.patch.object(ovn_client, 'ovs_idl', autospec=True)
     @mock.patch.object(ovn_client, 'connection', autospec=True)
     @mock.patch.object(ovn_client, 'idlutils', autospec=True)
@@ -91,12 +99,17 @@ class TestOVNClient(tests_base.BaseTestCase):
             self,
             mock_idlutils,
             mock_connection,
-            mock_ovs_idl):
+            mock_ovs_idl,
+            mock_nb_impl):
         """Test OVN Northbound IDL returns cached instance on second call."""
         mock_helper = mock.Mock()
         mock_idlutils.get_schema_helper = mock.Mock(return_value=mock_helper)
         mock_idl = mock.Mock()
         mock_ovs_idl.Idl.return_value = mock_idl
+        mock_conn = mock.Mock()
+        mock_connection.Connection.return_value = mock_conn
+        mock_api = mock.Mock()
+        mock_nb_impl.OvnNbApiIdlImpl.return_value = mock_api
 
         # First call creates connection
         result1 = ovn_client.get_ovn_nb_idl()
@@ -119,6 +132,7 @@ class TestOVNClient(tests_base.BaseTestCase):
 
         self.assertRaises(RuntimeError, ovn_client.get_ovn_nb_idl)
 
+    @mock.patch.object(ovn_client, 'sb_impl_idl', autospec=True)
     @mock.patch.object(ovn_client, 'ovs_idl', autospec=True)
     @mock.patch.object(ovn_client, 'connection', autospec=True)
     @mock.patch.object(ovn_client, 'idlutils', autospec=True)
@@ -126,12 +140,17 @@ class TestOVNClient(tests_base.BaseTestCase):
             self,
             mock_idlutils,
             mock_connection,
-            mock_ovs_idl):
+            mock_ovs_idl,
+            mock_sb_impl):
         """Test OVN Southbound IDL connection creation."""
         mock_helper = mock.Mock()
         mock_idlutils.get_schema_helper = mock.Mock(return_value=mock_helper)
         mock_idl = mock.Mock()
         mock_ovs_idl.Idl.return_value = mock_idl
+        mock_conn = mock.Mock()
+        mock_connection.Connection.return_value = mock_conn
+        mock_api = mock.Mock()
+        mock_sb_impl.OvnSbApiIdlImpl.return_value = mock_api
 
         result = ovn_client.get_ovn_sb_idl()
 
@@ -141,10 +160,12 @@ class TestOVNClient(tests_base.BaseTestCase):
         mock_helper.register_all.assert_called_once()
         mock_ovs_idl.Idl.assert_called_once_with(
             'tcp:127.0.0.1:6642', mock_helper)
+        mock_conn.start.assert_called_once()
 
-        # Should return raw IDL instance
-        self.assertEqual(result, mock_idl)
+        # Should return SB API instance
+        self.assertEqual(result, mock_api)
 
+    @mock.patch.object(ovn_client, 'sb_impl_idl', autospec=True)
     @mock.patch.object(ovn_client, 'ovs_idl', autospec=True)
     @mock.patch.object(ovn_client, 'connection', autospec=True)
     @mock.patch.object(ovn_client, 'idlutils', autospec=True)
@@ -152,12 +173,17 @@ class TestOVNClient(tests_base.BaseTestCase):
             self,
             mock_idlutils,
             mock_connection,
-            mock_ovs_idl):
+            mock_ovs_idl,
+            mock_sb_impl):
         """Test OVN Southbound IDL returns cached instance on second call."""
         mock_helper = mock.Mock()
         mock_idlutils.get_schema_helper = mock.Mock(return_value=mock_helper)
         mock_idl = mock.Mock()
         mock_ovs_idl.Idl.return_value = mock_idl
+        mock_conn = mock.Mock()
+        mock_connection.Connection.return_value = mock_conn
+        mock_api = mock.Mock()
+        mock_sb_impl.OvnSbApiIdlImpl.return_value = mock_api
 
         # First call creates connection
         result1 = ovn_client.get_ovn_sb_idl()
@@ -180,6 +206,8 @@ class TestOVNClient(tests_base.BaseTestCase):
 
         self.assertRaises(RuntimeError, ovn_client.get_ovn_sb_idl)
 
+    @mock.patch.object(ovn_client, 'sb_impl_idl', autospec=True)
+    @mock.patch.object(ovn_client, 'nb_impl_idl', autospec=True)
     @mock.patch.object(ovn_client, 'ovs_idl', autospec=True)
     @mock.patch.object(ovn_client, 'connection', autospec=True)
     @mock.patch.object(ovn_client, 'idlutils', autospec=True)
@@ -187,7 +215,9 @@ class TestOVNClient(tests_base.BaseTestCase):
             self,
             mock_idlutils,
             mock_connection,
-            mock_ovs_idl):
+            mock_ovs_idl,
+            mock_nb_impl,
+            mock_sb_impl):
         """Test NB and SB IDL connections are independent."""
         mock_helper = mock.Mock()
         mock_idlutils.get_schema_helper = mock.Mock(return_value=mock_helper)
@@ -195,6 +225,13 @@ class TestOVNClient(tests_base.BaseTestCase):
         mock_idl_nb = mock.Mock()
         mock_idl_sb = mock.Mock()
         mock_ovs_idl.Idl.side_effect = [mock_idl_nb, mock_idl_sb]
+        mock_conn_nb = mock.Mock()
+        mock_conn_sb = mock.Mock()
+        mock_connection.Connection.side_effect = [mock_conn_nb, mock_conn_sb]
+        mock_api_nb = mock.Mock()
+        mock_api_sb = mock.Mock()
+        mock_nb_impl.OvnNbApiIdlImpl.return_value = mock_api_nb
+        mock_sb_impl.OvnSbApiIdlImpl.return_value = mock_api_sb
 
         # Get both IDLs
         nb_idl = ovn_client.get_ovn_nb_idl()

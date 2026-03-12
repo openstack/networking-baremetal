@@ -1,0 +1,10 @@
+---
+fixes:
+  - |
+    Fixed AttributeError in ironic-neutron-agent when attempting to align
+    HA chassis groups for baremetal ports. The OVN client was returning
+    raw IDL objects instead of API objects, causing "AttributeError:
+    'Idl' object has no attribute 'lsp_get'" errors. The get_ovn_nb_idl()
+    and get_ovn_sb_idl() functions now correctly return OvnNbApiIdlImpl
+    and OvnSbApiIdlImpl instances that provide the required API methods.
+    See bug 2143988.
