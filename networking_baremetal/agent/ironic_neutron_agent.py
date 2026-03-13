@@ -22,6 +22,7 @@ from urllib import parse as urlparse
 
 from neutron.agent import rpc as agent_rpc
 from neutron.common import config as common_config
+from neutron.common.ovn import utils as ovn_utils
 from neutron.conf.agent import common as neutron_agent_config
 try:
     from neutron.conf.plugins.ml2.drivers.ovn import ovn_conf
@@ -38,6 +39,7 @@ from oslo_service import loopingcall
 from oslo_service import service
 from oslo_utils import timeutils
 from oslo_utils import uuidutils
+from ovsdbapp.backend.ovs_idl import idlutils
 from ovsdbapp import exceptions as ovs_exc
 from tooz import hashring
 
@@ -642,25 +644,43 @@ class BaremetalNeutronAgent(service.ServiceBase):
         # All baremetal ports on the same network should use the same
         # HA chassis group
         bm_ha_chassis_group = None
+        found_any_lsp = False
         for port in bm_ports:
             try:
-                lsp = ovn_nb_idl.lsp_get(port.id).execute(check_error=True)
-                if lsp and hasattr(lsp, 'ha_chassis_group'):
-                    ha_group = lsp.ha_chassis_group
-                    if ha_group:
-                        bm_ha_chassis_group = ha_group[0] if isinstance(
-                            ha_group, list) else ha_group
-                        LOG.debug("Found HA chassis group %s from port %s",
-                                  bm_ha_chassis_group, port.id)
-                        break
+                lsp = ovn_nb_idl.lsp_get(
+                    ovn_utils.ovn_name(port.id)).execute(check_error=True)
+                if lsp:
+                    found_any_lsp = True
+                    if hasattr(lsp, 'ha_chassis_group'):
+                        ha_group = lsp.ha_chassis_group
+                        if ha_group:
+                            bm_ha_chassis_group = ha_group[0] if isinstance(
+                                ha_group, list) else ha_group
+                            LOG.debug("Found HA chassis group %s from port %s",
+                                      bm_ha_chassis_group, port.id)
+                            break
+            except idlutils.RowNotFound:
+                # Port not found in OVN - this is expected if the port is
+                # not bound to the OVN mechanism driver (e.g., bound only
+                # to baremetal driver) or was recently deleted.
+                LOG.debug("Baremetal port %s not found in OVN (may not be "
+                          "bound to OVN driver), skipping", port.id)
+                continue
             except (ovs_exc.OvsdbAppException, RuntimeError, AttributeError):
                 LOG.debug("Could not get HA chassis group from port %s",
                           port.id, exc_info=True)
                 continue
 
+        if not found_any_lsp:
+            LOG.debug("Could not find any baremetal ports in OVN for "
+                      "network %s, skipping HA chassis group alignment",
+                      network_id)
+            return
+
         if not bm_ha_chassis_group:
-            LOG.debug("No HA chassis group found for baremetal ports on "
-                      "network %s, skipping", network_id)
+            LOG.debug("Baremetal ports on network %s have no HA chassis "
+                      "group set, nothing to align router ports to",
+                      network_id)
             return
 
         LOG.debug("Target HA chassis group for network %s: %s",

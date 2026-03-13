@@ -145,7 +145,7 @@ class TestHAChassisGroupAlignment(tests_base.BaseTestCase):
         self.agent._get_neutron_client.return_value = mock_neutron
 
         # Setup OVN mocks
-        lsp = FakeLogicalSwitchPort('bm-port-1', 'ha-group-1')
+        lsp = FakeLogicalSwitchPort('neutron-bm-port-1', 'ha-group-1')
         lrp = FakeLogicalRouterPort('lrp-router-port-1', 'ha-group-2')
 
         mock_ovn_nb = mock.MagicMock()
@@ -179,7 +179,7 @@ class TestHAChassisGroupAlignment(tests_base.BaseTestCase):
         self.agent._get_neutron_client.return_value = mock_neutron
 
         # Both use the same HA chassis group
-        lsp = FakeLogicalSwitchPort('bm-port-1', 'ha-group-1')
+        lsp = FakeLogicalSwitchPort('neutron-bm-port-1', 'ha-group-1')
         lrp = FakeLogicalRouterPort('lrp-router-port-1', 'ha-group-1')
 
         mock_ovn_nb = mock.MagicMock()
@@ -253,7 +253,7 @@ class TestHAChassisGroupAlignment(tests_base.BaseTestCase):
         self.agent._get_neutron_client.return_value = mock_neutron
 
         mock_ovn_nb = mock.MagicMock()
-        lsp = FakeLogicalSwitchPort('bm-port-recent', 'ha-group-1')
+        lsp = FakeLogicalSwitchPort('neutron-bm-port-recent', 'ha-group-1')
         mock_ovn_nb.lsp_get.return_value = FakeOVNCommand(lsp)
         mock_get_ovn_nb.return_value = mock_ovn_nb
 
@@ -263,7 +263,8 @@ class TestHAChassisGroupAlignment(tests_base.BaseTestCase):
         # Verify - should only process recent port (net-1), old port (net-2)
         # should be filtered out by time window
         # We verify this indirectly by checking OVN queries
-        mock_ovn_nb.lsp_get.assert_called_once_with('bm-port-recent')
+        # Note: OVN prefixes port names with "neutron-"
+        mock_ovn_nb.lsp_get.assert_called_once_with('neutron-bm-port-recent')
 
     @mock.patch('networking_baremetal.agent.ovn_client.get_ovn_nb_idl',
                 autospec=True)
@@ -301,7 +302,7 @@ class TestHAChassisGroupAlignment(tests_base.BaseTestCase):
         mock_ovn_nb = mock.MagicMock()
 
         # Baremetal port has no HA chassis group
-        lsp = FakeLogicalSwitchPort('bm-port-1', None)
+        lsp = FakeLogicalSwitchPort('neutron-bm-port-1', None)
         mock_ovn_nb.lsp_get.return_value = FakeOVNCommand(lsp)
 
         # Execute
@@ -319,7 +320,7 @@ class TestHAChassisGroupAlignment(tests_base.BaseTestCase):
         mock_neutron.network.ports.return_value = []  # No router ports
 
         mock_ovn_nb = mock.MagicMock()
-        lsp = FakeLogicalSwitchPort('bm-port-1', 'ha-group-1')
+        lsp = FakeLogicalSwitchPort('neutron-bm-port-1', 'ha-group-1')
         mock_ovn_nb.lsp_get.return_value = FakeOVNCommand(lsp)
 
         # Execute
@@ -342,7 +343,7 @@ class TestHAChassisGroupAlignment(tests_base.BaseTestCase):
         mock_neutron.network.ports.return_value = [router_port]
 
         mock_ovn_nb = mock.MagicMock()
-        lsp = FakeLogicalSwitchPort('bm-port-1', 'ha-group-1')
+        lsp = FakeLogicalSwitchPort('neutron-bm-port-1', 'ha-group-1')
         mock_ovn_nb.lsp_get.return_value = FakeOVNCommand(lsp)
         # Router port not found in OVN
         mock_ovn_nb.lrp_get.return_value = FakeOVNCommand(None)
@@ -364,7 +365,7 @@ class TestHAChassisGroupAlignment(tests_base.BaseTestCase):
         mock_neutron.network.ports.return_value = [router_port]
 
         mock_ovn_nb = mock.MagicMock()
-        lsp = FakeLogicalSwitchPort('bm-port-1', 'ha-group-1')
+        lsp = FakeLogicalSwitchPort('neutron-bm-port-1', 'ha-group-1')
         mock_ovn_nb.lsp_get.return_value = FakeOVNCommand(lsp)
 
         # Simulate error when updating
@@ -379,6 +380,82 @@ class TestHAChassisGroupAlignment(tests_base.BaseTestCase):
 
         # Verify - attempted to update
         mock_ovn_nb.lrp_set_ha_chassis_group.assert_called_once()
+
+    def test_align_network_continues_after_missing_ports(self):
+        """Test alignment continues when some BM ports missing from OVN.
+
+        This tests LP#2144061 - when some baremetal ports don't exist in
+        OVN (RowNotFound), the reconciliation should continue checking
+        other ports rather than short-circuiting.
+        """
+        from ovsdbapp.backend.ovs_idl import idlutils
+
+        # Create multiple baremetal ports
+        bm_port_1 = FakePort('bm-port-1', 'net-1',
+                             constants.BAREMETAL_NONE)
+        bm_port_2 = FakePort('bm-port-2', 'net-1',
+                             constants.BAREMETAL_NONE)
+        router_port = FakePort('router-port-1', 'net-1',
+                               n_const.DEVICE_OWNER_ROUTER_INTF)
+
+        mock_neutron = mock.MagicMock()
+        mock_neutron.network.ports.return_value = [router_port]
+
+        mock_ovn_nb = mock.MagicMock()
+
+        # First port lookup fails (port missing from OVN)
+        # Second port lookup succeeds and has HA chassis group
+        # Note: OVN prefixes port names with "neutron-"
+        def lsp_get_side_effect(port_name):
+            if port_name == 'neutron-bm-port-1':
+                # Simulate RowNotFound for missing port
+                raise idlutils.RowNotFound(table='Logical_Switch_Port',
+                                           col='name', match=port_name)
+            elif port_name == 'neutron-bm-port-2':
+                # Second port exists and has HA chassis group
+                lsp = FakeLogicalSwitchPort('neutron-bm-port-2',
+                                            'ha-group-1')
+                return FakeOVNCommand(lsp)
+
+        mock_ovn_nb.lsp_get.side_effect = lsp_get_side_effect
+
+        # Router port needs alignment
+        lrp = FakeLogicalRouterPort('lrp-router-port-1', 'ha-group-2')
+        mock_ovn_nb.lrp_get.return_value = FakeOVNCommand(lrp)
+        mock_ovn_nb.lrp_set_ha_chassis_group.return_value = FakeOVNCommand(
+            None)
+
+        # Execute - should not raise
+        self.agent._align_ha_chassis_group_for_network(
+            'net-1', [bm_port_1, bm_port_2], mock_neutron, mock_ovn_nb)
+
+        # Verify - should have found HA chassis group from second port
+        # and updated router port
+        mock_ovn_nb.lrp_set_ha_chassis_group.assert_called_once_with(
+            'lrp-router-port-1', 'ha-group-1')
+
+    def test_align_network_skips_when_all_ports_missing(self):
+        """Test alignment skips when all BM ports missing from OVN."""
+        from ovsdbapp.backend.ovs_idl import idlutils
+
+        bm_port = FakePort('bm-port-1', 'net-1', constants.BAREMETAL_NONE)
+
+        mock_neutron = mock.MagicMock()
+        mock_ovn_nb = mock.MagicMock()
+
+        # Port lookup fails - port missing from OVN
+        # Note: OVN prefixes port names with "neutron-"
+        mock_ovn_nb.lsp_get.side_effect = idlutils.RowNotFound(
+            table='Logical_Switch_Port', col='name',
+            match='neutron-bm-port-1')
+
+        # Execute
+        self.agent._align_ha_chassis_group_for_network(
+            'net-1', [bm_port], mock_neutron, mock_ovn_nb)
+
+        # Verify - should not query for router ports since we couldn't
+        # find any baremetal ports in OVN
+        mock_neutron.network.ports.assert_not_called()
 
 
 class TestBaremetalAgentConfig(tests_base.BaseTestCase):
