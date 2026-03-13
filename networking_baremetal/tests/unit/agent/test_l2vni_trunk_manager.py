@@ -601,7 +601,7 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         # Mock local link connection discovery
         with mock.patch.object(
                 self.manager,
-                '_get_local_link_connection',
+                '_get_local_link_information',
                 autospec=True,
                 return_value={'switch_id': '00:11:22:33:44:55',
                               'port_id': 'Ethernet1'}):
@@ -688,7 +688,7 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         # Mock local link connection discovery
         with mock.patch.object(
                 self.manager,
-                '_get_local_link_connection',
+                '_get_local_link_information',
                 autospec=True,
                 return_value={'switch_id': '00:11:22:33:44:55',
                               'port_id': 'Ethernet1'}):
@@ -709,21 +709,25 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
             self.assertNotIn('vni', binding_profile)
 
     def test_get_local_link_from_ovn_lldp_success(self):
-        """Test local_link_connection retrieval from OVN LLDP data."""
+        """Test local_link_information retrieval from OVN LLDP data."""
         # Mock chassis with bridge mappings
         chassis = FakeChassis('chassis-1', 'system-id-1')
         chassis.other_config['ovn-bridge-mappings'] = 'physnet1:br-physnet1'
         self.mock_ovn_sb.tables['Chassis'].rows.values\
             .return_value = [chassis]
 
-        # Mock port with LLDP data
+        # Mock port with LLDP data on the correct bridge
         port = mock.Mock()
-        port.chassis = chassis  # Should be chassis object, not list
+        port.chassis = chassis
         port.external_ids = {
             'lldp_chassis_id': '00:11:22:33:44:55',
             'lldp_port_id': 'Ethernet1/1',
             'lldp_system_name': 'switch.example.com'
         }
+        # Mock interface on the bridge
+        iface = mock.Mock()
+        iface.name = 'br-physnet1'
+        port.interfaces = [iface]
         self.mock_ovn_sb.tables['Port'].rows.values\
             .return_value = [port]
 
@@ -731,9 +735,56 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
             'system-id-1', 'physnet1')
 
         self.assertIsNotNone(result)
-        self.assertEqual('00:11:22:33:44:55', result['switch_id'])
-        self.assertEqual('Ethernet1/1', result['port_id'])
-        self.assertEqual('switch.example.com', result['switch_info'])
+        self.assertIsInstance(result, list)
+        self.assertEqual(1, len(result))
+        self.assertEqual('00:11:22:33:44:55', result[0]['switch_id'])
+        self.assertEqual('Ethernet1/1', result[0]['port_id'])
+        self.assertEqual('switch.example.com', result[0]['switch_info'])
+
+    def test_get_local_link_from_ovn_lldp_multiple_ports_lag(self):
+        """Test OVN LLDP aggregates multiple ports for LAG/bonding."""
+        # Mock chassis with bridge mappings
+        chassis = FakeChassis('chassis-1', 'system-id-1')
+        chassis.other_config['ovn-bridge-mappings'] = 'physnet1:br-physnet1'
+        self.mock_ovn_sb.tables['Chassis'].rows.values\
+            .return_value = [chassis]
+
+        # Mock two ports with LLDP data on the same bridge (LAG scenario)
+        port1 = mock.Mock()
+        port1.chassis = chassis
+        port1.external_ids = {
+            'lldp_chassis_id': '00:11:22:33:44:55',
+            'lldp_port_id': 'Ethernet1/3',
+            'lldp_system_name': 'switch.example.com'
+        }
+        iface1 = mock.Mock()
+        iface1.name = 'br-physnet1'
+        port1.interfaces = [iface1]
+
+        port2 = mock.Mock()
+        port2.chassis = chassis
+        port2.external_ids = {
+            'lldp_chassis_id': '00:11:22:33:44:55',
+            'lldp_port_id': 'Ethernet1/5',
+            'lldp_system_name': 'switch.example.com'
+        }
+        iface2 = mock.Mock()
+        iface2.name = 'br-physnet1'
+        port2.interfaces = [iface2]
+
+        self.mock_ovn_sb.tables['Port'].rows.values\
+            .return_value = [port1, port2]
+
+        result = self.manager._get_lldp_from_ovn(
+            'system-id-1', 'physnet1')
+
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, list)
+        self.assertEqual(2, len(result))
+        self.assertEqual('00:11:22:33:44:55', result[0]['switch_id'])
+        self.assertEqual('Ethernet1/3', result[0]['port_id'])
+        self.assertEqual('00:11:22:33:44:55', result[1]['switch_id'])
+        self.assertEqual('Ethernet1/5', result[1]['port_id'])
 
     def test_get_local_link_from_ovn_lldp_chassis_not_found(self):
         """Test OVN LLDP when chassis not found."""
@@ -746,8 +797,87 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
 
         self.assertIsNone(result)
 
+    def test_get_local_link_from_ovn_lldp_filters_wrong_bridge(self):
+        """Test OVN LLDP filters out ports on different bridges."""
+        # Mock chassis with multiple bridge mappings
+        chassis = FakeChassis('chassis-1', 'system-id-1')
+        chassis.other_config['ovn-bridge-mappings'] = (
+            'physnet1:br-physnet1,physnet2:br-physnet2')
+        self.mock_ovn_sb.tables['Chassis'].rows.values\
+            .return_value = [chassis]
+
+        # Mock ports on different bridges
+        port1 = mock.Mock()
+        port1.chassis = chassis
+        port1.external_ids = {
+            'lldp_chassis_id': '00:11:22:33:44:55',
+            'lldp_port_id': 'Ethernet1/1',
+            'lldp_system_name': 'switch1.example.com'
+        }
+        iface1 = mock.Mock()
+        iface1.name = 'br-physnet1'
+        port1.interfaces = [iface1]
+
+        port2 = mock.Mock()
+        port2.chassis = chassis
+        port2.external_ids = {
+            'lldp_chassis_id': 'aa:bb:cc:dd:ee:ff',
+            'lldp_port_id': 'Ethernet2/1',
+            'lldp_system_name': 'switch2.example.com'
+        }
+        iface2 = mock.Mock()
+        iface2.name = 'br-physnet2'
+        port2.interfaces = [iface2]
+
+        self.mock_ovn_sb.tables['Port'].rows.values\
+            .return_value = [port1, port2]
+
+        # Query for physnet1 should only return port1
+        result = self.manager._get_lldp_from_ovn(
+            'system-id-1', 'physnet1')
+
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, list)
+        self.assertEqual(1, len(result))
+        self.assertEqual('00:11:22:33:44:55', result[0]['switch_id'])
+        self.assertEqual('Ethernet1/1', result[0]['port_id'])
+        self.assertEqual('switch1.example.com', result[0]['switch_info'])
+
+    def test_get_local_link_from_ironic_multiple_ports_lag(self):
+        """Test Ironic aggregates multiple ports for LAG/bonding."""
+        # Mock two Ironic ports with same physnet (LAG scenario)
+        local_link_conn1 = {
+            'switch_id': 'aa:bb:cc:dd:ee:ff',
+            'port_id': 'GigabitEthernet1/0/1',
+            'switch_info': 'ironic-switch'
+        }
+        local_link_conn2 = {
+            'switch_id': 'aa:bb:cc:dd:ee:ff',
+            'port_id': 'GigabitEthernet1/0/2',
+            'switch_info': 'ironic-switch'
+        }
+        ironic_port1 = FakeIronicPort(
+            'node-id-1', 'physnet1', local_link_conn1)
+        ironic_port2 = FakeIronicPort(
+            'node-id-1', 'physnet1', local_link_conn2)
+        ironic_node = FakeIronicNode('node-id-1', 'system-id-1')
+
+        self.mock_ironic.nodes.return_value = [ironic_node]
+        self.mock_ironic.ports.return_value = [ironic_port1, ironic_port2]
+
+        result = self.manager._get_local_link_from_ironic(
+            'system-id-1', 'physnet1')
+
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, list)
+        self.assertEqual(2, len(result))
+        self.assertEqual('aa:bb:cc:dd:ee:ff', result[0]['switch_id'])
+        self.assertEqual('GigabitEthernet1/0/1', result[0]['port_id'])
+        self.assertEqual('aa:bb:cc:dd:ee:ff', result[1]['switch_id'])
+        self.assertEqual('GigabitEthernet1/0/2', result[1]['port_id'])
+
     def test_get_local_link_from_ironic_success(self):
-        """Test local_link_connection retrieval from Ironic."""
+        """Test local_link_information retrieval from Ironic."""
         # Mock Ironic port and node
         local_link_conn = {
             'switch_id': 'aa:bb:cc:dd:ee:ff',
@@ -766,8 +896,10 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
             'system-id-1', 'physnet1')
 
         self.assertIsNotNone(result)
-        self.assertEqual('aa:bb:cc:dd:ee:ff', result['switch_id'])
-        self.assertEqual('GigabitEthernet1/0/1', result['port_id'])
+        self.assertIsInstance(result, list)
+        self.assertEqual(1, len(result))
+        self.assertEqual('aa:bb:cc:dd:ee:ff', result[0]['switch_id'])
+        self.assertEqual('GigabitEthernet1/0/1', result[0]['port_id'])
 
         # Verify efficient querying - nodes() called with fields filter
         self.mock_ironic.nodes.assert_called_once_with(
@@ -776,6 +908,90 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         self.mock_ironic.ports.assert_called_once_with(
             node_uuid='node-id-1',
             fields=['physical_network', 'local_link_connection'])
+
+    def test_aggregate_ironic_ports_for_physnet_single_port(self):
+        """Test port aggregation helper with single port."""
+        cache_entry = {
+            'cached_at': 1234567890.0,
+            'node_uuid': 'node-1',
+            'ports': [
+                {
+                    'physnet': 'physnet1',
+                    'local_link': {
+                        'switch_id': 'aa:bb:cc:dd:ee:ff',
+                        'port_id': 'Ethernet1/1'
+                    }
+                }
+            ]
+        }
+
+        result = self.manager._aggregate_ironic_ports_for_physnet(
+            cache_entry, 'physnet1', 'system-1', 'test-source')
+
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, list)
+        self.assertEqual(1, len(result))
+        self.assertEqual('aa:bb:cc:dd:ee:ff', result[0]['switch_id'])
+
+    def test_aggregate_ironic_ports_for_physnet_multiple_ports(self):
+        """Test port aggregation helper with multiple ports (LAG)."""
+        cache_entry = {
+            'cached_at': 1234567890.0,
+            'node_uuid': 'node-1',
+            'ports': [
+                {
+                    'physnet': 'physnet1',
+                    'local_link': {
+                        'switch_id': 'aa:bb:cc:dd:ee:ff',
+                        'port_id': 'Ethernet1/1'
+                    }
+                },
+                {
+                    'physnet': 'physnet1',
+                    'local_link': {
+                        'switch_id': 'aa:bb:cc:dd:ee:ff',
+                        'port_id': 'Ethernet1/2'
+                    }
+                },
+                {
+                    'physnet': 'physnet2',
+                    'local_link': {
+                        'switch_id': 'aa:bb:cc:dd:ee:ff',
+                        'port_id': 'Ethernet2/1'
+                    }
+                }
+            ]
+        }
+
+        result = self.manager._aggregate_ironic_ports_for_physnet(
+            cache_entry, 'physnet1', 'system-1', 'test-source')
+
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, list)
+        self.assertEqual(2, len(result))
+        self.assertEqual('Ethernet1/1', result[0]['port_id'])
+        self.assertEqual('Ethernet1/2', result[1]['port_id'])
+
+    def test_aggregate_ironic_ports_for_physnet_no_match(self):
+        """Test port aggregation helper with no matching physnet."""
+        cache_entry = {
+            'cached_at': 1234567890.0,
+            'node_uuid': 'node-1',
+            'ports': [
+                {
+                    'physnet': 'physnet2',
+                    'local_link': {
+                        'switch_id': 'aa:bb:cc:dd:ee:ff',
+                        'port_id': 'Ethernet1/1'
+                    }
+                }
+            ]
+        }
+
+        result = self.manager._aggregate_ironic_ports_for_physnet(
+            cache_entry, 'physnet1', 'system-1', 'test-source')
+
+        self.assertIsNone(result)
 
     def test_get_local_link_from_ironic_node_not_found(self):
         """Test Ironic fallback when node not found."""
@@ -808,6 +1024,7 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         result1 = self.manager._get_local_link_from_ironic(
             'system-id-1', 'physnet1')
         self.assertIsNotNone(result1)
+        self.assertIsInstance(result1, list)
         self.assertEqual(1, self.mock_ironic.nodes.call_count)
         self.assertEqual(1, self.mock_ironic.ports.call_count)
 
@@ -885,8 +1102,8 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
             fields=['uuid', 'properties'],
             shard='shard1')
 
-    def test_get_local_link_connection_tiered_fallback(self):
-        """Test tiered local_link_connection discovery."""
+    def test_get_local_link_information_tiered_fallback(self):
+        """Test tiered local_link_information discovery."""
         # Setup mocks for tiered fallback
         with mock.patch.object(
                 self.manager,
@@ -897,20 +1114,21 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
                 self.manager,
                 '_get_local_link_from_ironic',
                 autospec=True,
-                return_value={'switch_id': 'from-ironic',
-                              'port_id': 'port1'}), \
+                return_value=[{'switch_id': 'from-ironic',
+                               'port_id': 'port1'}]), \
             mock.patch.object(
                 self.manager,
                 '_get_local_link_from_config',
                 autospec=True,
-                return_value={'switch_id': 'from-config',
-                              'port_id': 'port2'}):
+                return_value=[{'switch_id': 'from-config',
+                               'port_id': 'port2'}]):
 
             # OVN returns None, should fall back to Ironic
-            result = self.manager._get_local_link_connection(
+            result = self.manager._get_local_link_information(
                 'system-1', 'physnet1')
 
-            self.assertEqual('from-ironic', result['switch_id'])
+            self.assertIsInstance(result, list)
+            self.assertEqual('from-ironic', result[0]['switch_id'])
 
     @mock.patch('builtins.open', new_callable=mock.mock_open,
                 read_data='''
@@ -918,13 +1136,13 @@ network_nodes:
   - system_id: system-1
     trunks:
       - physical_network: physnet1
-        local_link_connection:
+        local_link_information:
           switch_id: "11:22:33:44:55:66"
           port_id: "Ethernet1"
           switch_info: "config-switch"
 ''')
     def test_get_local_link_from_config_success(self, mock_file):
-        """Test local_link_connection retrieval from YAML config."""
+        """Test local_link_information retrieval from YAML config."""
         cfg.CONF.set_override('l2vni_network_nodes_config',
                               '/etc/neutron/l2vni_network_nodes.yaml',
                               group='l2vni')
@@ -933,8 +1151,41 @@ network_nodes:
             'system-1', 'physnet1')
 
         self.assertIsNotNone(result)
-        self.assertEqual('11:22:33:44:55:66', result['switch_id'])
-        self.assertEqual('Ethernet1', result['port_id'])
+        self.assertIsInstance(result, list)
+        self.assertEqual(1, len(result))
+        self.assertEqual('11:22:33:44:55:66', result[0]['switch_id'])
+        self.assertEqual('Ethernet1', result[0]['port_id'])
+
+    @mock.patch('builtins.open', new_callable=mock.mock_open,
+                read_data='''
+network_nodes:
+  - system_id: system-1
+    trunks:
+      - physical_network: physnet1
+        local_link_information:
+          - switch_id: "22:57:f8:dd:03:01"
+            port_id: "Ethernet1/3"
+            switch_info: "leaf01.netlab.example.com"
+          - switch_id: "22:57:f8:dd:03:01"
+            port_id: "Ethernet1/5"
+            switch_info: "leaf01.netlab.example.com"
+''')
+    def test_get_local_link_from_config_list_format_lag(self, mock_file):
+        """Test YAML config with list of links for LAG/bonding."""
+        cfg.CONF.set_override('l2vni_network_nodes_config',
+                              '/etc/neutron/l2vni_network_nodes.yaml',
+                              group='l2vni')
+
+        result = self.manager._get_local_link_from_config(
+            'system-1', 'physnet1')
+
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, list)
+        self.assertEqual(2, len(result))
+        self.assertEqual('22:57:f8:dd:03:01', result[0]['switch_id'])
+        self.assertEqual('Ethernet1/3', result[0]['port_id'])
+        self.assertEqual('22:57:f8:dd:03:01', result[1]['switch_id'])
+        self.assertEqual('Ethernet1/5', result[1]['port_id'])
 
     @mock.patch('builtins.open', new_callable=mock.mock_open,
                 read_data='''
@@ -942,13 +1193,13 @@ network_nodes:
   - hostname: test-hostname
     trunks:
       - physical_network: physnet1
-        local_link_connection:
+        local_link_information:
           switch_id: "aa:bb:cc:dd:ee:ff"
           port_id: "Ethernet2"
           switch_info: "hostname-switch"
 ''')
     def test_get_local_link_from_config_hostname_fallback(self, mock_file):
-        """Test local_link_connection retrieval using hostname fallback."""
+        """Test local_link_information retrieval using hostname fallback."""
         cfg.CONF.set_override('l2vni_network_nodes_config',
                               '/etc/neutron/l2vni_network_nodes.yaml',
                               group='l2vni')
@@ -962,8 +1213,38 @@ network_nodes:
             'system-uuid-123', 'physnet1')
 
         self.assertIsNotNone(result)
-        self.assertEqual('aa:bb:cc:dd:ee:ff', result['switch_id'])
-        self.assertEqual('Ethernet2', result['port_id'])
+        self.assertIsInstance(result, list)
+        self.assertEqual(1, len(result))
+        self.assertEqual('aa:bb:cc:dd:ee:ff', result[0]['switch_id'])
+        self.assertEqual('Ethernet2', result[0]['port_id'])
+
+    @mock.patch('builtins.open', new_callable=mock.mock_open,
+                read_data='''
+network_nodes:
+  - system_id: system-1
+    trunks:
+      - physical_network: physnet1
+        local_link_connection:
+          switch_id: "11:22:33:44:55:66"
+          port_id: "Ethernet1"
+''')
+    def test_get_local_link_from_config_deprecated_name_warning(
+            self, mock_file):
+        """Test deprecation warning for old local_link_connection name."""
+        cfg.CONF.set_override('l2vni_network_nodes_config',
+                              '/etc/neutron/l2vni_network_nodes.yaml',
+                              group='l2vni')
+
+        with self.assertLogs(
+                'networking_baremetal.agent.l2vni_trunk_manager',
+                level='WARNING') as log:
+            result = self.manager._get_local_link_from_config(
+                'system-1', 'physnet1')
+
+            self.assertIsNotNone(result)
+            self.assertIn("deprecated 'local_link_connection'",
+                          log.output[0])
+            self.assertIn("'local_link_information'", log.output[0])
 
     def test_cleanup_orphaned_trunks_removes_deleted_chassis(self):
         """Test cleanup removes trunks for deleted chassis."""
@@ -1093,7 +1374,7 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         self.mock_neutron.network.create_trunk.side_effect = (
             sdkexc.SDKException('Neutron error'))
 
-        # Mock ha_group network lookup and local_link_connection
+        # Mock ha_group network lookup and local_link_information
         with mock.patch.object(
                 self.manager,
                 '_find_ha_group_network_for_chassis',
@@ -1101,7 +1382,7 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
                 return_value='network-id'), \
              mock.patch.object(
                 self.manager,
-                '_get_local_link_connection',
+                '_get_local_link_information',
                 autospec=True,
                 return_value=None):
             result = self.manager._find_or_create_trunk(
@@ -1137,8 +1418,8 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         # Should handle gracefully and return empty or minimal result
         self.assertIsInstance(result, dict)
 
-    def test_anchor_port_creation_includes_local_link_connection(self):
-        """Test anchor port creation includes local_link_connection."""
+    def test_anchor_port_creation_includes_local_link_information(self):
+        """Test anchor port creation includes local_link_information."""
         system_id = 'system-1'
         physnet = 'physnet1'
 
@@ -1158,7 +1439,7 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         self.mock_ovn_sb.tables['Chassis'].rows.values\
             .return_value = [chassis]
 
-        # Mock local_link_connection discovery
+        # Mock local_link_information discovery
         local_link = {
             'switch_id': '00:11:22:33:44:55',
             'port_id': 'Ethernet1/5',
@@ -1166,9 +1447,9 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         }
         with mock.patch.object(
                 self.manager,
-                '_get_local_link_connection',
+                '_get_local_link_information',
                 autospec=True,
-                return_value=local_link):
+                return_value=[local_link]):
 
             # Mock port creation
             created_port = FakePort(
@@ -1190,8 +1471,68 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
             [local_link],
             call_kwargs['binding_profile']['local_link_information'])
 
-    def test_anchor_port_creation_without_local_link_connection(self):
-        """Test anchor port creation when local_link_connection unavailable."""
+    def test_anchor_port_creation_with_multiple_links_lag(self):
+        """Test anchor port creation with multiple links for LAG/bonding."""
+        system_id = 'system-1'
+        physnet = 'physnet1'
+
+        # Mock no existing port
+        self.mock_neutron.network.ports.return_value = []
+
+        # Mock ha_group network
+        ha_network = FakeNetwork('ha-net-id', 'l2vni-ha-group-group1')
+        self.mock_neutron.network.networks.return_value = [ha_network]
+
+        # Setup OVN data for ha_group lookup
+        chassis = FakeChassis('chassis-1', system_id, hostname='host1')
+        ha_chassis = FakeHAChassis(system_id)
+        ha_group = FakeHAChassisGroup('group1', [ha_chassis])
+        self.mock_ovn_nb.tables['HA_Chassis_Group'].rows.values\
+            .return_value = [ha_group]
+        self.mock_ovn_sb.tables['Chassis'].rows.values\
+            .return_value = [chassis]
+
+        # Mock local_link_information discovery with multiple links
+        local_links = [
+            {
+                'switch_id': '00:11:22:33:44:55',
+                'port_id': 'Ethernet1/3',
+                'switch_info': 'switch1'
+            },
+            {
+                'switch_id': '00:11:22:33:44:55',
+                'port_id': 'Ethernet1/5',
+                'switch_info': 'switch1'
+            }
+        ]
+        with mock.patch.object(
+                self.manager,
+                '_get_local_link_information',
+                autospec=True,
+                return_value=local_links):
+
+            # Mock port creation
+            created_port = FakePort(
+                'anchor-port-id',
+                l2vni_trunk_manager.DEVICE_OWNER_L2VNI_ANCHOR)
+            self.mock_neutron.network.create_port.return_value = created_port
+
+            result = self.manager._find_or_create_anchor_port(
+                system_id, physnet)
+
+        # Should create port with multiple links in binding profile
+        self.assertEqual('anchor-port-id', result)
+        self.mock_neutron.network.create_port.assert_called_once()
+        call_kwargs = self.mock_neutron.network.create_port.call_args[1]
+        self.assertIn('binding_profile', call_kwargs)
+        self.assertIn('local_link_information',
+                      call_kwargs['binding_profile'])
+        self.assertEqual(
+            local_links,
+            call_kwargs['binding_profile']['local_link_information'])
+
+    def test_anchor_port_creation_without_local_link_information(self):
+        """Test anchor port creation when local_link_information is N/A."""
         system_id = 'system-1'
         physnet = 'physnet1'
 
@@ -1211,10 +1552,10 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         self.mock_ovn_sb.tables['Chassis'].rows.values\
             .return_value = [chassis]
 
-        # Mock local_link_connection discovery returns None
+        # Mock local_link_information discovery returns None
         with mock.patch.object(
                 self.manager,
-                '_get_local_link_connection',
+                '_get_local_link_information',
                 autospec=True,
                 return_value=None):
 
@@ -1227,7 +1568,7 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
             result = self.manager._find_or_create_anchor_port(
                 system_id, physnet)
 
-        # Should still create port, but without local_link_connection
+        # Should still create port, but without local_link_information
         self.assertEqual('anchor-port-id', result)
         self.mock_neutron.network.create_port.assert_called_once()
         call_kwargs = self.mock_neutron.network.create_port.call_args[1]
@@ -1251,7 +1592,7 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
                                                   'physical_network': physnet})
         self.mock_neutron.network.ports.return_value = [existing_port]
 
-        # Mock local_link_connection discovery
+        # Mock local_link_information discovery
         local_link = {
             'switch_id': '00:11:22:33:44:55',
             'port_id': 'Ethernet1/5',
@@ -1259,9 +1600,9 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         }
         with mock.patch.object(
                 self.manager,
-                '_get_local_link_connection',
+                '_get_local_link_information',
                 autospec=True,
-                return_value=local_link):
+                return_value=[local_link]):
 
             result = self.manager._find_or_create_anchor_port(
                 system_id, physnet)
@@ -1313,12 +1654,12 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         Verifies that when a trunk already exists, _find_or_create_trunk()
         still calls _find_or_create_anchor_port() to reconcile the anchor
         port's binding profile. This ensures existing trunks created before
-        the local_link_connection fix get updated.
+        the local_link_information fix get updated.
         """
         system_id = 'system-1'
         physnet = 'physnet1'
 
-        # Mock existing anchor port WITHOUT local_link_connection
+        # Mock existing anchor port WITHOUT local_link_information
         existing_anchor_port = FakePort(
             'anchor-port-id',
             l2vni_trunk_manager.DEVICE_OWNER_L2VNI_ANCHOR,
@@ -1336,7 +1677,7 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         self.mock_neutron.network.ports.return_value = [existing_anchor_port]
         self.mock_neutron.network.trunks.return_value = [existing_trunk]
 
-        # Mock local_link_connection discovery
+        # Mock local_link_information discovery
         local_link = {
             'switch_id': '00:11:22:33:44:55',
             'port_id': 'Ethernet1/5',
@@ -1344,9 +1685,9 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         }
         with mock.patch.object(
                 self.manager,
-                '_get_local_link_connection',
+                '_get_local_link_information',
                 autospec=True,
-                return_value=local_link):
+                return_value=[local_link]):
 
             result = self.manager._find_or_create_trunk(system_id, physnet)
 

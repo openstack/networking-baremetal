@@ -558,13 +558,15 @@ class L2VNITrunkManager:
                 return port.id
 
             # Port exists but missing local_link_information
-            local_link = self._get_local_link_connection(system_id, physnet)
-            if local_link:
-                binding_profile['local_link_information'] = [local_link]
+            local_link_list = self._get_local_link_information(
+                system_id, physnet)
+            if local_link_list:
+                binding_profile['local_link_information'] = local_link_list
                 self.neutron.network.update_port(
                     port.id, binding_profile=binding_profile)
                 LOG.info("Updated anchor port %s with missing "
-                         "local_link_information", port.id)
+                         "local_link_information (%d link(s))",
+                         port.id, len(local_link_list))
             else:
                 LOG.warning(
                     "Anchor port %s missing local_link_information for "
@@ -579,10 +581,10 @@ class L2VNITrunkManager:
                         "chassis %s", system_id)
             return None
 
-        # Get local_link_connection for new anchor port
-        local_link = self._get_local_link_connection(system_id, physnet)
-        if not local_link:
-            LOG.warning("Could not determine local_link_connection for "
+        # Get local_link_information for new anchor port
+        local_link_list = self._get_local_link_information(system_id, physnet)
+        if not local_link_list:
+            LOG.warning("Could not determine local_link_information for "
                         "chassis %s physnet %s. Port will be created but "
                         "may not bind properly when subports are added.",
                         system_id, physnet)
@@ -592,8 +594,12 @@ class L2VNITrunkManager:
             'system_id': system_id,
             'physical_network': physnet
         }
-        if local_link:
-            binding_profile['local_link_information'] = [local_link]
+        if local_link_list:
+            binding_profile['local_link_information'] = local_link_list
+            if len(local_link_list) > 1:
+                LOG.info("Creating anchor port with %d links (LAG/bonding) "
+                         "for chassis %s physnet %s",
+                         len(local_link_list), system_id, physnet)
 
         # Create anchor port
         try:
@@ -1132,17 +1138,22 @@ class L2VNITrunkManager:
             LOG.exception("Failed to remove subport for VLAN %d from "
                           "trunk %s", vlan_id, trunk_id)
 
-    def _get_local_link_connection(self, system_id, physnet):
-        """Get local_link_connection data using tiered approach.
+    def _get_local_link_information(self, system_id, physnet):
+        """Get local_link_information data using tiered approach.
 
         Tries in order:
         1. OVN LLDP data
         2. Ironic port data
         3. YAML configuration file
 
+        Aggregates multiple links for LAG/bonding configurations where
+        multiple physical ports connect to the same physical network.
+
         :param system_id: Chassis system-id
         :param physnet: Physical network name
-        :returns: dict with local_link_connection or None
+        :returns: list of dicts with local_link_information, or None if no
+                  connection data found. List may contain multiple entries
+                  for LAG/bonding scenarios.
         """
         # Try OVN LLDP data first
         lldp_data = self._get_lldp_from_ovn(system_id, physnet)
@@ -1158,14 +1169,16 @@ class L2VNITrunkManager:
         return self._get_local_link_from_config(system_id, physnet)
 
     def _get_lldp_from_ovn(self, system_id, physnet):
-        """Get local_link_connection from OVN LLDP data.
+        """Get local_link_information from OVN LLDP data.
 
         Extracts LLDP information from OVN Southbound Port table for the
-        chassis and physical network.
+        chassis and physical network. Aggregates all ports on the bridge
+        to support LAG/bonding configurations.
 
         :param system_id: Chassis system-id (same as chassis name)
         :param physnet: Physical network name
-        :returns: dict with local_link_connection or None
+        :returns: list of dicts with local_link_information, or None if no
+                  LLDP data found
         """
         try:
             if not hasattr(self.ovn_sb_idl, 'tables'):
@@ -1197,11 +1210,35 @@ class L2VNITrunkManager:
             if not bridge_name:
                 return None
 
-            # Look for ports on this chassis with LLDP data
+            # Aggregate all ports on this chassis with LLDP for this bridge
+            # Supports LAG/bonding with multiple ports to same bridge
+            local_links = []
             if 'Port' in self.ovn_sb_idl.tables:
                 for port in self.ovn_sb_idl.tables['Port'].rows.values():
                     # Check if port belongs to this chassis
                     if port.chassis != chassis:
+                        continue
+
+                    # Check if this port is on the correct bridge
+                    # Port.interfaces is a list of Interface objects
+                    if not hasattr(port, 'interfaces') or not port.interfaces:
+                        continue
+
+                    port_on_bridge = False
+                    for iface in port.interfaces:
+                        # Interface.name typically matches the OVS interface
+                        # which should contain the bridge name for physical
+                        # interfaces (e.g., "br-physnet1", "eth0", etc.)
+                        if not hasattr(iface, 'name'):
+                            continue
+                        iface_name = iface.name
+                        # Check if interface name matches or is on bridge
+                        if (iface_name == bridge_name
+                                or iface_name.startswith(bridge_name)):
+                            port_on_bridge = True
+                            break
+
+                    if not port_on_bridge:
                         continue
 
                     # Get LLDP data from external_ids
@@ -1211,15 +1248,23 @@ class L2VNITrunkManager:
                     system_name = lldp.get('lldp_system_name')
 
                     if chassis_id and port_id:
-                        LOG.debug("Found LLDP data for chassis %s physnet %s: "
-                                  "switch_id=%s, port_id=%s, switch_info=%s",
-                                  system_id, physnet, chassis_id, port_id,
-                                  system_name)
-                        return {
+                        LOG.debug("Found LLDP data for chassis %s physnet %s "
+                                  "bridge %s: switch_id=%s, port_id=%s, "
+                                  "switch_info=%s",
+                                  system_id, physnet, bridge_name, chassis_id,
+                                  port_id, system_name)
+                        local_links.append({
                             'switch_id': chassis_id,
                             'port_id': port_id,
                             'switch_info': system_name or ''
-                        }
+                        })
+
+            if local_links:
+                if len(local_links) > 1:
+                    LOG.info("Found %d links for chassis %s physnet %s "
+                             "(LAG/bonding configuration)",
+                             len(local_links), system_id, physnet)
+                return local_links
 
             return None
 
@@ -1294,16 +1339,52 @@ class L2VNITrunkManager:
                           system_id)
             return None
 
+    def _aggregate_ironic_ports_for_physnet(self, cache_entry, physnet,
+                                            system_id, source_label):
+        """Aggregate Ironic ports matching physnet from cache entry.
+
+        Helper method to extract local_link_information data for all ports
+        matching a physical network from a cached Ironic data entry.
+
+        :param cache_entry: Cached Ironic data dict with 'ports' list
+        :param physnet: Physical network name to filter by
+        :param system_id: Chassis system-id (for logging)
+        :param source_label: Label for log messages (e.g., "Ironic cache",
+                            "Ironic")
+        :returns: list of local_link_information dicts, or None if no matches
+        """
+        local_links = []
+        for port in cache_entry['ports']:
+            if port['physnet'] == physnet:
+                local_links.append(port['local_link'])
+
+        if local_links:
+            if len(local_links) > 1:
+                LOG.debug("Found %d links from %s for chassis %s physnet %s "
+                          "(LAG/bonding)",
+                          len(local_links), source_label, system_id, physnet)
+            else:
+                LOG.debug("Found local_link_information from %s for "
+                          "chassis %s physnet %s",
+                          source_label, system_id, physnet)
+            return local_links
+
+        return None
+
     def _get_local_link_from_ironic(self, system_id, physnet):
-        """Get local_link_connection from Ironic, using per-record cache.
+        """Get local_link_information from Ironic, using per-record cache.
 
         Uses a per-record cache with TTL and jitter to avoid thundering herd
         issues when multiple agents are running. Each system_id is cached
         independently and only refreshed when its TTL expires.
 
+        Aggregates all Ironic ports matching the physnet to support LAG/bonding
+        configurations where multiple ports share the same physical_network.
+
         :param system_id: Chassis system-id
         :param physnet: Physical network name
-        :returns: dict with local_link_connection or None
+        :returns: list of dicts with local_link_information, or None if no
+                  ports found
         """
         try:
             # Check if we have a valid cached entry for this system_id
@@ -1322,13 +1403,8 @@ class L2VNITrunkManager:
                               "(age: %.1fs, TTL: %.1fs)",
                               system_id, age, ttl_with_jitter)
 
-                    for port in cached_entry['ports']:
-                        if port['physnet'] == physnet:
-                            LOG.debug("Found local_link_connection from "
-                                      "Ironic cache for chassis %s physnet %s",
-                                      system_id, physnet)
-                            return port['local_link']
-                    return None
+                    return self._aggregate_ironic_ports_for_physnet(
+                        cached_entry, physnet, system_id, "Ironic cache")
                 else:
                     LOG.debug("Ironic cache expired for system_id %s "
                               "(age: %.1fs, TTL: %.1fs)",
@@ -1343,36 +1419,68 @@ class L2VNITrunkManager:
                 # Update cache with new entry
                 self._ironic_cache[system_id] = cache_entry
 
-                # Find the port matching physnet
-                for port in cache_entry['ports']:
-                    if port['physnet'] == physnet:
-                        LOG.debug("Found local_link_connection from Ironic "
-                                  "for chassis %s physnet %s: %s",
-                                  system_id, physnet, port['local_link'])
-                        return port['local_link']
+                return self._aggregate_ironic_ports_for_physnet(
+                    cache_entry, physnet, system_id, "Ironic")
 
             return None
 
         except (KeyError, AttributeError):
-            LOG.exception("Failed to get local_link_connection from Ironic "
+            LOG.exception("Failed to get local_link_information from Ironic "
                           "for chassis %s physnet %s.", system_id,
                           physnet)
             return None
 
     def _get_local_link_from_node_config(self, node, physnet):
-        """Get local_link_connection from a network node config entry.
+        """Get local_link_information from a network node config entry.
+
+        Supports both single-link and multi-link (LAG/bonding) configurations:
+        - Single dict: local_link_information: {switch_id: ..., port_id: ...}
+        - List of dicts: local_link_information: [{...}, {...}]
+
+        For backward compatibility, also accepts 'local_link_connection' as an
+        alias for 'local_link_information'.
 
         :param node: Network node config dict from YAML
         :param physnet: Physical network name
-        :returns: dict with local_link_connection or None
+        :returns: list of dicts with local_link_information, or None
         """
         for trunk_config in node.get('trunks', []):
             if trunk_config.get('physical_network') == physnet:
-                return trunk_config.get('local_link_connection')
+                # Try new name first, fallback to old name for backward compat
+                local_link = trunk_config.get('local_link_information')
+                if not local_link:
+                    # Check for deprecated name
+                    local_link = trunk_config.get('local_link_connection')
+                    if local_link:
+                        LOG.warning(
+                            "Configuration uses deprecated "
+                            "'local_link_connection' field for physnet %s. "
+                            "Please update to 'local_link_information' (as a "
+                            "list) to match Neutron API naming.",
+                            physnet)
+
+                if not local_link:
+                    return None
+
+                # Support both single dict and list of dicts
+                if isinstance(local_link, list):
+                    # Already a list - return as-is
+                    if len(local_link) > 1:
+                        LOG.debug("Found %d links in config for physnet %s "
+                                  "(LAG/bonding)", len(local_link), physnet)
+                    return local_link
+                elif isinstance(local_link, dict):
+                    # Single dict - wrap in list for consistency
+                    return [local_link]
+                else:
+                    LOG.warning("Invalid local_link_information format in "
+                                "config for physnet %s: expected dict or list",
+                                physnet)
+                    return None
         return None
 
     def _get_local_link_from_config(self, system_id, physnet):
-        """Get local_link_connection from YAML config file.
+        """Get local_link_information from YAML config file.
 
         Matches network nodes by system_id (chassis UUID) or hostname.
         This allows the YAML config to use either the predictable hostname
@@ -1380,7 +1488,7 @@ class L2VNITrunkManager:
 
         :param system_id: Chassis system-id (UUID)
         :param physnet: Physical network name
-        :returns: dict with local_link_connection or None
+        :returns: list of dicts with local_link_information or None
         """
         if self._config_cache is None:
             self._load_config()
