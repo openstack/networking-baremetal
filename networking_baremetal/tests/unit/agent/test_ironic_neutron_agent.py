@@ -462,6 +462,36 @@ class TestHAChassisGroupAlignment(tests_base.BaseTestCase):
         mock_neutron.network.ports.assert_not_called()
 
 
+class TestL2VNITargetedReconciliation(tests_base.BaseTestCase):
+    """Tests for targeted single-VLAN reconciliation in agent."""
+
+    def test_reconcile_single_vlan_blocking_acquires_lock(self):
+        """Test wrapper method acquires lock and calls trunk manager."""
+        agent = mock.Mock(spec=ironic_neutron_agent.BaremetalNeutronAgent)
+        agent.trunk_manager = mock.Mock()
+        agent._l2vni_reconciliation_lock = mock.MagicMock()
+
+        ironic_neutron_agent.BaremetalNeutronAgent.\
+            _reconcile_single_vlan_blocking(
+                agent, 'net-1', 'physnet1', 100, 'add')
+
+        agent._l2vni_reconciliation_lock.__enter__.assert_called_once()
+        agent.trunk_manager.reconcile_single_vlan.assert_called_once_with(
+            'net-1', 'physnet1', 100, 'add')
+
+    def test_reconcile_single_vlan_blocking_handles_exception(self):
+        """Test wrapper method handles exceptions gracefully."""
+        agent = mock.Mock(spec=ironic_neutron_agent.BaremetalNeutronAgent)
+        agent.trunk_manager = mock.Mock()
+        agent._l2vni_reconciliation_lock = mock.MagicMock()
+        agent.trunk_manager.reconcile_single_vlan.side_effect = \
+            Exception("Test error")
+
+        ironic_neutron_agent.BaremetalNeutronAgent.\
+            _reconcile_single_vlan_blocking(
+                agent, 'net-1', 'physnet1', 100, 'add')
+
+
 class TestBaremetalAgentConfig(tests_base.BaseTestCase):
     """Test cases for baremetal agent configuration options."""
 

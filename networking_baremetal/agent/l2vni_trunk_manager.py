@@ -38,6 +38,7 @@ from neutron_lib import constants as n_const
 from openstack import exceptions as sdkexc
 from oslo_config import cfg
 from oslo_log import log as logging
+from ovsdbapp import exceptions as ovs_exc
 
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
@@ -178,6 +179,75 @@ class L2VNITrunkManager:
             LOG.exception("Unexpected error during L2VNI trunk "
                           "reconciliation.")
             # Don't re-raise - let reconciliation continue on next interval
+
+    def reconcile_single_vlan(self, network_id, physnet, vlan_id,
+                              action='add'):
+        """Targeted reconciliation for a single VLAN.
+
+        Called by OVN event handlers when a specific localnet port is
+        created or deleted. Much faster than full reconciliation because
+        we already know which VLAN to add/remove.
+
+        :param network_id: Neutron network UUID (tenant network with VLAN)
+        :param physnet: Physical network name
+        :param vlan_id: VLAN ID to add or remove
+        :param action: 'add' for CREATE events, 'remove' for DELETE events
+        """
+        try:
+            LOG.debug("Starting targeted reconciliation: %s VLAN %d on "
+                      "physnet %s for network %s",
+                      action, vlan_id, physnet, network_id)
+
+            # Skip reconciliation if OVN connections are not available
+            if self.ovn_nb_idl is None or self.ovn_sb_idl is None:
+                LOG.error("OVN connections not available, cannot perform "
+                          "targeted reconciliation")
+                return
+
+            # Ensure infrastructure networks exist (creates if missing)
+            self._ensure_infrastructure_networks()
+
+            # Get subport anchor network
+            anchor_network_id = self._get_subport_anchor_network_id()
+            if not anchor_network_id:
+                LOG.error("Cannot reconcile VLAN without anchor network")
+                return
+
+            # Find all chassis that have this physnet
+            chassis_set = self._get_all_chassis_with_physnet(physnet)
+            if not chassis_set:
+                LOG.debug("No chassis found with physnet %s", physnet)
+                return
+
+            # For each chassis, add or remove the subport
+            for system_id in chassis_set:
+                if not self._should_manage_chassis(system_id):
+                    continue
+
+                # Ensure trunk exists
+                trunk_id = self._find_or_create_trunk(system_id, physnet)
+                if not trunk_id:
+                    LOG.error("Cannot reconcile VLAN %d for chassis %s: "
+                              "trunk not found/created", vlan_id, system_id)
+                    continue
+
+                # Add or remove this specific VLAN
+                if action == 'add':
+                    self._ensure_single_subport(
+                        trunk_id, system_id, physnet, vlan_id,
+                        anchor_network_id)
+                elif action == 'remove':
+                    self._remove_single_subport(
+                        trunk_id, system_id, physnet, vlan_id)
+
+            LOG.info("Completed targeted reconciliation for %s VLAN %d on "
+                     "physnet %s", action, vlan_id, physnet)
+
+        except (sdkexc.SDKException, ovs_exc.OvsdbAppException):
+            LOG.exception(
+                "Failed targeted reconciliation for VLAN %d on "
+                "physnet %s, will retry on next periodic reconciliation",
+                vlan_id, physnet)
 
     def _ensure_infrastructure_networks(self):
         """Ensure ha_chassis_group and subport anchor networks exist.
@@ -932,6 +1002,67 @@ class L2VNITrunkManager:
         except sdkexc.SDKException:
             LOG.exception("Failed to remove subport %s from trunk %s",
                           port_id, trunk_id)
+
+    def _ensure_single_subport(self, trunk_id, system_id, physnet, vlan_id,
+                               anchor_network_id):
+        """Ensure a single subport exists on a trunk.
+
+        Idempotent - checks if subport already exists before creating.
+
+        :param trunk_id: Trunk UUID
+        :param system_id: Chassis system-id
+        :param physnet: Physical network name
+        :param vlan_id: VLAN ID for segmentation
+        :param anchor_network_id: Subport anchor network UUID
+        """
+        try:
+            trunk = self.neutron.network.get_trunk(trunk_id)
+            existing_vlans = {sp['segmentation_id'] for sp in trunk.sub_ports}
+
+            if vlan_id in existing_vlans:
+                LOG.debug("Subport for VLAN %d already exists on trunk %s",
+                          vlan_id, trunk_id)
+                return
+
+            # Add the subport
+            self._add_subport(trunk_id, system_id, physnet, vlan_id,
+                              anchor_network_id)
+
+        except sdkexc.SDKException:
+            LOG.exception("Failed to ensure subport for VLAN %d on trunk %s",
+                          vlan_id, trunk_id)
+
+    def _remove_single_subport(self, trunk_id, system_id, physnet, vlan_id):
+        """Remove a single subport from a trunk if it exists.
+
+        Idempotent - checks if subport exists before removing.
+
+        :param trunk_id: Trunk UUID
+        :param system_id: Chassis system-id
+        :param physnet: Physical network name
+        :param vlan_id: VLAN ID to remove
+        """
+        try:
+            trunk = self.neutron.network.get_trunk(trunk_id)
+            subport_to_remove = None
+
+            for sp in trunk.sub_ports:
+                if sp['segmentation_id'] == vlan_id:
+                    subport_to_remove = sp['port_id']
+                    break
+
+            if not subport_to_remove:
+                LOG.debug("Subport for VLAN %d does not exist on trunk %s",
+                          vlan_id, trunk_id)
+                return
+
+            # Remove the subport
+            self._remove_subport(trunk_id, subport_to_remove, system_id,
+                                 physnet, vlan_id)
+
+        except sdkexc.SDKException:
+            LOG.exception("Failed to remove subport for VLAN %d from "
+                          "trunk %s", vlan_id, trunk_id)
 
     def _get_local_link_connection(self, system_id, physnet):
         """Get local_link_connection data using tiered approach.

@@ -1,0 +1,9 @@
+---
+features:
+  - |
+    Added targeted single-VLAN reconciliation for OVN event-driven L2VNI trunk
+    management. When localnet port events are received, the agent now updates
+    only the specific VLAN from the event rather than scanning all VLANs,
+    significantly reducing reconciliation time and API calls. This works with
+    ``enable_l2vni_trunk_reconciliation_events = True`` in the ``[l2vni]``
+    section.

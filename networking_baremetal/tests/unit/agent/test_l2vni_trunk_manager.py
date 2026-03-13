@@ -1290,3 +1290,260 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         self.mock_neutron.network.create_port.assert_called_once()
         # update_port should not be called since we have no hostname
         self.mock_neutron.network.update_port.assert_not_called()
+
+
+class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
+    """Tests for targeted single-VLAN reconciliation."""
+
+    def setUp(self):
+        super().setUp()
+        agent_config.register_agent_opts(CONF)
+        CONF.set_override('l2vni_subport_anchor_network', 'l2vni-subports',
+                          group='l2vni')
+        CONF.set_override('l2vni_auto_create_networks', True, group='l2vni')
+
+    def _create_manager(self):
+        """Create L2VNITrunkManager with mocked dependencies."""
+        neutron = mock.Mock()
+        ovn_nb_idl = mock.Mock()
+        ovn_sb_idl = mock.Mock()
+        ironic = mock.Mock()
+
+        ovn_nb_idl.tables = {
+            'HA_Chassis_Group': mock.Mock(rows=mock.Mock(values=mock.Mock(
+                return_value=[]))),
+            'Logical_Switch_Port': mock.Mock(rows=mock.Mock(values=mock.Mock(
+                return_value=[]))),
+            'Logical_Router_Port': mock.Mock(rows=mock.Mock(values=mock.Mock(
+                return_value=[])))
+        }
+        ovn_sb_idl.tables = {
+            'Chassis': mock.Mock(rows=mock.Mock(values=mock.Mock(
+                return_value=[])))
+        }
+
+        return l2vni_trunk_manager.L2VNITrunkManager(
+            neutron, ovn_nb_idl, ovn_sb_idl, ironic)
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_infrastructure_networks', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_subport_anchor_network_id', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_all_chassis_with_physnet', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_find_or_create_trunk', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_single_subport', autospec=True)
+    def test_reconcile_single_vlan_add_action(
+            self, mock_ensure_subport, mock_find_trunk, mock_get_chassis,
+            mock_get_anchor, mock_ensure_infra):
+        """Test targeted reconciliation adds subport for single VLAN."""
+        manager = self._create_manager()
+
+        mock_get_anchor.return_value = 'anchor-net-id'
+        mock_get_chassis.return_value = {'chassis-1', 'chassis-2'}
+
+        trunk_map = {}
+
+        def find_trunk_side_effect(self, system_id, physnet):
+            trunk_id = f'trunk-{system_id}'
+            trunk_map[system_id] = trunk_id
+            return trunk_id
+
+        mock_find_trunk.side_effect = find_trunk_side_effect
+
+        manager.reconcile_single_vlan('net-1', 'physnet1', 100, action='add')
+
+        mock_ensure_infra.assert_called_once_with(manager)
+        mock_get_anchor.assert_called_once_with(manager)
+        mock_get_chassis.assert_called_once_with(manager, 'physnet1')
+        self.assertEqual(2, mock_find_trunk.call_count)
+        self.assertEqual(2, mock_ensure_subport.call_count)
+
+        for system_id in ['chassis-1', 'chassis-2']:
+            trunk_id = trunk_map[system_id]
+            mock_ensure_subport.assert_any_call(
+                manager, trunk_id, system_id, 'physnet1', 100, 'anchor-net-id')
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_infrastructure_networks', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_subport_anchor_network_id', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_all_chassis_with_physnet', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_find_or_create_trunk', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_remove_single_subport', autospec=True)
+    def test_reconcile_single_vlan_remove_action(
+            self, mock_remove_subport, mock_find_trunk, mock_get_chassis,
+            mock_get_anchor, mock_ensure_infra):
+        """Test targeted reconciliation removes subport for single VLAN."""
+        manager = self._create_manager()
+
+        mock_get_anchor.return_value = 'anchor-net-id'
+        mock_get_chassis.return_value = {'chassis-1'}
+        mock_find_trunk.return_value = 'trunk-1'
+
+        manager.reconcile_single_vlan(
+            'net-1', 'physnet1', 200, action='remove')
+
+        mock_ensure_infra.assert_called_once_with(manager)
+        mock_get_anchor.assert_called_once_with(manager)
+        mock_get_chassis.assert_called_once_with(manager, 'physnet1')
+        mock_find_trunk.assert_called_once_with(
+            manager, 'chassis-1', 'physnet1')
+        mock_remove_subport.assert_called_once_with(
+            manager, 'trunk-1', 'chassis-1', 'physnet1', 200)
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_infrastructure_networks', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_subport_anchor_network_id', autospec=True)
+    def test_reconcile_single_vlan_no_anchor_network(
+            self, mock_get_anchor, mock_ensure_infra):
+        """Test reconciliation exits early if anchor network missing."""
+        manager = self._create_manager()
+        mock_get_anchor.return_value = None
+
+        manager.reconcile_single_vlan('net-1', 'physnet1', 100, action='add')
+
+        mock_ensure_infra.assert_called_once_with(manager)
+        mock_get_anchor.assert_called_once_with(manager)
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_infrastructure_networks', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_subport_anchor_network_id', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_all_chassis_with_physnet', autospec=True)
+    def test_reconcile_single_vlan_no_chassis_with_physnet(
+            self, mock_get_chassis, mock_get_anchor, mock_ensure_infra):
+        """Test reconciliation exits early if no chassis with physnet."""
+        manager = self._create_manager()
+        mock_get_anchor.return_value = 'anchor-net-id'
+        mock_get_chassis.return_value = set()
+
+        manager.reconcile_single_vlan('net-1', 'physnet1', 100, action='add')
+
+        mock_ensure_infra.assert_called_once_with(manager)
+        mock_get_chassis.assert_called_once_with(manager, 'physnet1')
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_infrastructure_networks', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_subport_anchor_network_id', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_all_chassis_with_physnet', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_find_or_create_trunk', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_single_subport', autospec=True)
+    def test_reconcile_single_vlan_trunk_creation_fails(
+            self, mock_ensure_subport, mock_find_trunk, mock_get_chassis,
+            mock_get_anchor, mock_ensure_infra):
+        """Test reconciliation continues if trunk creation fails."""
+        manager = self._create_manager()
+
+        mock_get_anchor.return_value = 'anchor-net-id'
+        mock_get_chassis.return_value = {'chassis-1', 'chassis-2'}
+
+        def find_trunk_side_effect(self, system_id, physnet):
+            if system_id == 'chassis-1':
+                return None
+            return f'trunk-{system_id}'
+
+        mock_find_trunk.side_effect = find_trunk_side_effect
+
+        manager.reconcile_single_vlan('net-1', 'physnet1', 100, action='add')
+
+        self.assertEqual(2, mock_find_trunk.call_count)
+        mock_ensure_subport.assert_called_once_with(
+            manager, 'trunk-chassis-2', 'chassis-2', 'physnet1', 100,
+            'anchor-net-id')
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_infrastructure_networks', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_subport_anchor_network_id', autospec=True)
+    def test_reconcile_single_vlan_handles_sdk_exception(
+            self, mock_get_anchor, mock_ensure_infra):
+        """Test reconciliation handles SDK exceptions gracefully."""
+        manager = self._create_manager()
+        mock_get_anchor.side_effect = sdkexc.SDKException("API error")
+
+        manager.reconcile_single_vlan('net-1', 'physnet1', 100, action='add')
+
+        mock_ensure_infra.assert_called_once_with(manager)
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_add_subport', autospec=True)
+    def test_ensure_single_subport_creates_when_missing(self, mock_add):
+        """Test _ensure_single_subport creates subport if missing."""
+        manager = self._create_manager()
+
+        trunk = mock.Mock()
+        trunk.sub_ports = [
+            {'port_id': 'port-1', 'segmentation_id': 100},
+            {'port_id': 'port-2', 'segmentation_id': 200}
+        ]
+        manager.neutron.network.get_trunk.return_value = trunk
+
+        manager._ensure_single_subport(
+            'trunk-1', 'chassis-1', 'physnet1', 300, 'anchor-net-id')
+
+        mock_add.assert_called_once_with(
+            manager, 'trunk-1', 'chassis-1', 'physnet1', 300, 'anchor-net-id')
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_add_subport', autospec=True)
+    def test_ensure_single_subport_skips_if_exists(self, mock_add):
+        """Test _ensure_single_subport is idempotent."""
+        manager = self._create_manager()
+
+        trunk = mock.Mock()
+        trunk.sub_ports = [
+            {'port_id': 'port-1', 'segmentation_id': 100},
+            {'port_id': 'port-2', 'segmentation_id': 200}
+        ]
+        manager.neutron.network.get_trunk.return_value = trunk
+
+        manager._ensure_single_subport(
+            'trunk-1', 'chassis-1', 'physnet1', 100, 'anchor-net-id')
+
+        mock_add.assert_not_called()
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_remove_subport', autospec=True)
+    def test_remove_single_subport_removes_when_exists(self, mock_remove):
+        """Test _remove_single_subport removes existing subport."""
+        manager = self._create_manager()
+
+        trunk = mock.Mock()
+        trunk.sub_ports = [
+            {'port_id': 'port-1', 'segmentation_id': 100},
+            {'port_id': 'port-2', 'segmentation_id': 200}
+        ]
+        manager.neutron.network.get_trunk.return_value = trunk
+
+        manager._remove_single_subport('trunk-1', 'chassis-1', 'physnet1', 100)
+
+        mock_remove.assert_called_once_with(
+            manager, 'trunk-1', 'port-1', 'chassis-1', 'physnet1', 100)
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_remove_subport', autospec=True)
+    def test_remove_single_subport_skips_if_not_exists(self, mock_remove):
+        """Test _remove_single_subport is idempotent."""
+        manager = self._create_manager()
+
+        trunk = mock.Mock()
+        trunk.sub_ports = [
+            {'port_id': 'port-1', 'segmentation_id': 100}
+        ]
+        manager.neutron.network.get_trunk.return_value = trunk
+
+        manager._remove_single_subport('trunk-1', 'chassis-1', 'physnet1', 200)
+
+        mock_remove.assert_not_called()

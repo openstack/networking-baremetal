@@ -61,7 +61,8 @@ or deletes localnet ports during baremetal port binding operations.
 **Benefits:**
 
 - Eliminates stale IDL cache issues
-- Sub-second reconciliation latency (typically 100-500ms)
+- Immediate reconciliation response to events
+- Targeted updates for specific VLANs avoid full trunk scans
 - No RPC infrastructure required
 - Events fire at the OVN layer where changes actually occur
 - Automatic cleanup when localnet ports are deleted
@@ -72,11 +73,17 @@ or deletes localnet ports during baremetal port binding operations.
 2. OVN sends notification to all connected IDL clients
 3. Agent's IDL processes the notification via ``idl.run()``
 4. ``LocalnetPortEvent.matches()`` filters for L2VNI localnet ports and hash ring ownership
-5. ``LocalnetPortEvent.run()`` triggers immediate reconciliation
-6. Reconciliation adds required VLAN subports to network node trunks
+5. ``LocalnetPortEvent.run()`` extracts network ID, physnet, and VLAN ID from the event
+6. Agent performs **targeted reconciliation** for that specific VLAN:
 
-The event handler is registered at agent startup and watches continuously,
-eliminating race conditions where events might be missed.
+   - Ensures infrastructure networks exist
+   - Finds/creates trunks for chassis with the physnet
+   - Adds or removes only the specific VLAN subport (idempotent)
+   - Skips scanning all other VLANs on the trunk
+
+This targeted approach is significantly faster than full reconciliation, especially
+on trunks with many VLANs. The event handler is registered at agent startup and
+watches continuously, eliminating race conditions where events might be missed.
 
 **2. Periodic Reconciliation (Default: Enabled)**
 

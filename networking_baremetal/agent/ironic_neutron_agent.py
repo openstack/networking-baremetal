@@ -528,6 +528,30 @@ class BaremetalNeutronAgent(service.ServiceBase):
         """
         return neutron_client.get_client()
 
+    def _reconcile_single_vlan_blocking(
+            self, network_id, physnet, vlan_id, action):
+        """Targeted reconciliation for a single VLAN (blocking lock).
+
+        Called by OVN event handlers. Uses blocking lock acquisition to ensure
+        the event is processed (unlike periodic reconciliation which skips if
+        locked).
+
+        :param network_id: Neutron network UUID
+        :param physnet: Physical network name
+        :param vlan_id: VLAN ID to add or remove
+        :param action: 'add' or 'remove'
+        """
+        LOG.debug("Acquiring lock for targeted VLAN reconciliation...")
+        with self._l2vni_reconciliation_lock:
+            LOG.debug("Lock acquired, processing targeted reconciliation for "
+                      "VLAN %d on physnet %s", vlan_id, physnet)
+            try:
+                self.trunk_manager.reconcile_single_vlan(
+                    network_id, physnet, vlan_id, action)
+            except Exception:
+                LOG.exception("Failed targeted reconciliation for VLAN %d",
+                              vlan_id)
+
     def _reconcile_l2vni_trunks(self):
         """Periodic L2VNI trunk reconciliation"""
         if not self._l2vni_reconciliation_lock.acquire(blocking=False):
