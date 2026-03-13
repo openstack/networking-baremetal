@@ -86,6 +86,16 @@ class TestAgentConfig(tests_base.BaseTestCase):
                           group='l2vni')
         self.assertFalse(CONF.l2vni.l2vni_auto_create_networks)
 
+    def test_enable_l2vni_trunk_reconciliation_events_default(self):
+        """Test enable_l2vni_trunk_reconciliation_events default value."""
+        self.assertTrue(CONF.l2vni.enable_l2vni_trunk_reconciliation_events)
+
+    def test_enable_l2vni_trunk_reconciliation_events_can_be_set(self):
+        """Test enable_l2vni_trunk_reconciliation_events can be set."""
+        CONF.set_override('enable_l2vni_trunk_reconciliation_events', False,
+                          group='l2vni')
+        self.assertFalse(CONF.l2vni.enable_l2vni_trunk_reconciliation_events)
+
     def test_l2vni_subport_anchor_network_default(self):
         """Test l2vni_subport_anchor_network default value."""
         self.assertEqual('l2vni-subport-anchor',

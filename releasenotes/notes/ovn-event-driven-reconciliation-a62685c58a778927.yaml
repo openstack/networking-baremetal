@@ -1,0 +1,10 @@
+---
+features:
+  - |
+    Added OVN event-driven reconciliation for L2VNI trunk management.
+    The ironic-neutron-agent now watches OVN Northbound database for
+    localnet port events, triggering immediate reconciliation when baremetal
+    ports are bound or unbound. This provides sub-second reconciliation
+    latency compared to the periodic interval (default 300 seconds).
+    The feature is enabled by default via
+    ``enable_l2vni_trunk_reconciliation_events`` in the ``[l2vni]`` section.

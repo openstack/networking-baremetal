@@ -16,9 +16,9 @@
 
 from oslo_config import cfg
 from oslo_log import log as logging
-from ovs.db import idl as ovs_idl
 from ovs import stream
 from ovsdbapp.backend.ovs_idl import connection
+from ovsdbapp.backend.ovs_idl import event as row_event
 from ovsdbapp.backend.ovs_idl import idlutils
 from ovsdbapp.schema.ovn_northbound import impl_idl as nb_impl_idl
 from ovsdbapp.schema.ovn_southbound import impl_idl as sb_impl_idl
@@ -28,6 +28,47 @@ LOG = logging.getLogger(__name__)
 
 _OVN_NB_IDL = None
 _OVN_SB_IDL = None
+_OVN_NB_EVENT_IDL = None
+
+
+class AgentOvnNbIdl(connection.OvsdbIdl):
+    """Custom OVN NB IDL with event handler support for agent.
+
+    Extends the standard OvsdbIdl to add RowEvent notification support.
+    This allows the agent to watch for specific OVN database changes
+    (e.g., localnet port creation) and trigger immediate reconciliation.
+    """
+
+    def __init__(self, remote, schema, **kwargs):
+        self.notify_handler = row_event.RowEventHandler()
+        super().__init__(remote, schema, **kwargs)
+
+    def notify(self, event, row, updates=None):
+        """Called by IDL when database changes occur.
+
+        Forwards notifications to registered RowEvent handlers.
+        """
+        self.notify_handler.notify(event, row, updates)
+
+
+class AgentOvnSbIdl(connection.OvsdbIdl):
+    """Custom OVN SB IDL with event handler support for agent.
+
+    Extends the standard OvsdbIdl to add RowEvent notification support.
+    This allows the agent to watch for specific OVN database changes
+    and trigger immediate reconciliation if needed.
+    """
+
+    def __init__(self, remote, schema, **kwargs):
+        self.notify_handler = row_event.RowEventHandler()
+        super().__init__(remote, schema, **kwargs)
+
+    def notify(self, event, row, updates=None):
+        """Called by IDL when database changes occur.
+
+        Forwards notifications to registered RowEvent handlers.
+        """
+        self.notify_handler.notify(event, row, updates)
 
 
 def _configure_ovn_ssl():
@@ -196,8 +237,8 @@ def get_ovn_nb_idl():
                                                 'OVN_Northbound')
             helper.register_all()
 
-            # Create IDL instance from helper
-            idl = ovs_idl.Idl(conn_string, helper)
+            # Create custom IDL instance with event handler support
+            idl = AgentOvnNbIdl(conn_string, helper)
 
             ovn_conn = connection.Connection(
                 idl,
@@ -240,8 +281,8 @@ def get_ovn_sb_idl():
                                                 'OVN_Southbound')
             helper.register_all()
 
-            # Create IDL instance from helper
-            idl = ovs_idl.Idl(conn_string, helper)
+            # Create custom IDL instance with event handler support
+            idl = AgentOvnSbIdl(conn_string, helper)
 
             ovn_conn = connection.Connection(
                 idl,
@@ -260,3 +301,56 @@ def get_ovn_sb_idl():
             raise
 
     return _OVN_SB_IDL
+
+
+def get_ovn_nb_event_idl():
+    """Get OVN Northbound IDL connection for event watching only.
+
+    This connection registers only the minimal set of tables needed for
+    event watching, significantly reducing event notification overhead.
+    Use this connection for registering RowEvent handlers.
+
+    For queries and updates, use get_ovn_nb_idl() instead.
+
+    :returns: OVN NB API instance (event-watching connection)
+    """
+    global _OVN_NB_EVENT_IDL
+
+    if _OVN_NB_EVENT_IDL is None:
+        try:
+            # Get connection string from config (with fallback to [ovn])
+            conn_string = _get_ovn_nb_connection()
+            timeout = _get_ovn_ovsdb_timeout()
+            LOG.debug("Connecting to OVN NB (event-only): %s", conn_string)
+
+            # Configure SSL if using SSL connections
+            _configure_ovn_ssl()
+
+            # Create IDL connection with selective table registration
+            helper = idlutils.get_schema_helper(conn_string,
+                                                'OVN_Northbound')
+            # Only register tables needed for event watching
+            # This dramatically reduces event notification overhead
+            helper.register_table('Logical_Switch_Port')
+
+            # Create custom IDL instance with event handler support
+            idl = AgentOvnNbIdl(conn_string, helper)
+
+            ovn_conn = connection.Connection(
+                idl,
+                timeout=timeout
+            )
+            ovn_conn.start()
+
+            # Create and store the NB API implementation
+            _OVN_NB_EVENT_IDL = nb_impl_idl.OvnNbApiIdlImpl(ovn_conn)
+            LOG.info("Connected to OVN Northbound database (event-only "
+                     "connection with selective table registration)")
+
+        except Exception:
+            LOG.info("Unable to connect to OVN Northbound database at %s: "
+                     "(OVN may not be configured)", conn_string,
+                     exc_info=True)
+            raise
+
+    return _OVN_NB_EVENT_IDL

@@ -81,6 +81,17 @@ L2VNI_OPTS = [
              'issues when multiple agents restart simultaneously (e.g., '
              'post-upgrade). A value of 60 means each agent will start '
              'reconciliation within 0-60 seconds of startup.'),
+    cfg.BoolOpt(
+        'enable_l2vni_trunk_reconciliation_events',
+        default=True,
+        help='Enable event-driven L2VNI trunk reconciliation. When enabled, '
+             'the agent watches OVN Northbound database for localnet port '
+             'creation and deletion events and triggers immediate '
+             'reconciliation. This eliminates the stale IDL cache issue and '
+             'provides sub-second reconciliation latency. Periodic '
+             'reconciliation still runs as a safety net. Requires '
+             'enable_l2vni_trunk_reconciliation to be enabled. If disabled, '
+             'only periodic reconciliation will be used.'),
     cfg.ListOpt(
         'ovn_nb_connection',
         default=None,

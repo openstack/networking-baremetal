@@ -30,15 +30,109 @@ when:
 - Router migrations cause chassis membership changes
 - Network nodes are added or removed from the infrastructure
 
-The trunk reconciliation feature automates this entire process.
+The trunk reconciliation feature automates this entire process using two
+complementary mechanisms that can be used independently or together:
+
+1. **OVN Event-Driven Reconciliation**: Watches OVN database for localnet port
+   changes and triggers immediate reconciliation (typically 100-500ms latency)
+2. **Periodic Reconciliation**: Runs at regular intervals as a safety net to
+   ensure eventual consistency
+
+**Recommended for production**: Enable both mechanisms. Event-driven provides
+immediate response to changes, while periodic reconciliation ensures eventual
+consistency even if events are missed or the agent is restarted.
 
 Architecture
 ============
 
+Reconciliation Mechanisms
+--------------------------
+
+The agent uses two reconciliation mechanisms that can be used independently
+or together. **For production deployments, using both is strongly recommended.**
+
+**1. Event-Driven L2VNI Trunk Reconciliation (Default: Enabled)**
+
+When enabled (``enable_l2vni_trunk_reconciliation_events = True``), the agent
+watches OVN Northbound database for localnet port creation and deletion events.
+This provides immediate reconciliation when the L2VNI mechanism driver creates
+or deletes localnet ports during baremetal port binding operations.
+
+**Benefits:**
+
+- Eliminates stale IDL cache issues
+- Sub-second reconciliation latency (typically 100-500ms)
+- No RPC infrastructure required
+- Events fire at the OVN layer where changes actually occur
+- Automatic cleanup when localnet ports are deleted
+
+**How It Works:**
+
+1. L2VNI mechanism driver creates localnet port in OVN Northbound DB
+2. OVN sends notification to all connected IDL clients
+3. Agent's IDL processes the notification via ``idl.run()``
+4. ``LocalnetPortEvent.matches()`` filters for L2VNI localnet ports and hash ring ownership
+5. ``LocalnetPortEvent.run()`` triggers immediate reconciliation
+6. Reconciliation adds required VLAN subports to network node trunks
+
+The event handler is registered at agent startup and watches continuously,
+eliminating race conditions where events might be missed.
+
+**2. Periodic Reconciliation (Default: Enabled)**
+
+Periodic reconciliation runs at the configured interval
+(``l2vni_reconciliation_interval``) as a safety net to catch any missed
+events, handle agent restarts, and ensure eventual consistency.
+
+This mechanism can run independently of event-driven reconciliation, making it
+suitable for deployments where OVN event support is unavailable or for testing
+scenarios where you want predictable reconciliation timing.
+
+**Operating Modes**
+
+The agent supports three operating modes:
+
+1. **Both Enabled (Recommended for Production)**
+
+   .. code-block:: ini
+
+      [l2vni]
+      enable_l2vni_trunk_reconciliation = True
+      enable_l2vni_trunk_reconciliation_events = True
+
+   - Event-driven reconciliation provides immediate response (100-500ms)
+   - Periodic reconciliation ensures eventual consistency
+   - Best reliability and performance
+
+2. **Event-Driven Only (Testing/Advanced)**
+
+   .. code-block:: ini
+
+      [l2vni]
+      enable_l2vni_trunk_reconciliation = False
+      enable_l2vni_trunk_reconciliation_events = True
+
+   - Only event-driven reconciliation runs
+   - No periodic safety net
+   - Useful for testing event-driven behavior in isolation
+   - Lower overhead but no eventual consistency guarantee
+
+3. **Periodic Only (Fallback)**
+
+   .. code-block:: ini
+
+      [l2vni]
+      enable_l2vni_trunk_reconciliation = True
+      enable_l2vni_trunk_reconciliation_events = False
+
+   - Only periodic reconciliation runs
+   - Higher latency (up to reconciliation_interval)
+   - Useful if OVN event support is unavailable
+
 How It Works
 ------------
 
-The ironic-neutron-agent runs a periodic reconciliation loop that:
+The ironic-neutron-agent runs a reconciliation process that:
 
 1. **Discovers Network Nodes**: Identifies chassis that are members of OVN
    ha_chassis_groups by querying the OVN Northbound database.
@@ -256,6 +350,9 @@ Edit ``/etc/neutron/neutron.conf`` (or a separate config file in
    # Enable L2VNI trunk reconciliation
    enable_l2vni_trunk_reconciliation = True
 
+   # Enable event-driven L2VNI trunk reconciliation
+   enable_l2vni_trunk_reconciliation_events = True
+
    # Baseline reconciliation interval (seconds)
    l2vni_reconciliation_interval = 300
 
@@ -285,11 +382,40 @@ Configuration Options Reference
 
     **Default**: ``True``
 
-    **Description**: Switch to enable L2VNI trunk port reconciliation.
-    When enabled, the agent will automatically manage trunk subports for
-    network nodes based on OVN ha_chassis_group membership.
+    **Description**: Enable periodic L2VNI trunk port reconciliation.
+    When enabled, the agent runs reconciliation at regular intervals
+    (``l2vni_reconciliation_interval``) to ensure eventual consistency.
 
-    Set this to ``False`` to disable the feature.
+    This can be used independently or together with event-driven reconciliation.
+    For production deployments, keeping this enabled is recommended as a safety
+    net to catch missed events and handle agent restarts.
+
+    Set this to ``False`` to disable periodic reconciliation. Event-driven
+    reconciliation (if enabled) will still work, but there will be no periodic
+    safety net.
+
+``enable_l2vni_trunk_reconciliation_events``
+    **Type**: Boolean
+
+    **Default**: ``True``
+
+    **Description**: Enable OVN RowEvent-based event-driven L2VNI trunk
+    reconciliation. When enabled, the agent watches OVN Northbound database
+    for localnet port creation and deletion events and triggers immediate
+    reconciliation. This eliminates the stale IDL cache issue and provides
+    sub-second reconciliation latency.
+
+    This can be used independently or together with periodic reconciliation.
+    For production deployments, using both event-driven and periodic
+    reconciliation is recommended. Event-driven provides immediate response,
+    while periodic ensures eventual consistency.
+
+    Requires OVN IDL connection to be available. If the OVN IDL does not
+    support event handlers, the agent will log a warning and fall back to
+    periodic reconciliation only.
+
+    Set this to ``False`` to disable event-driven reconciliation. Periodic
+    reconciliation (if enabled) will still work, but with higher latency.
 
 ``l2vni_reconciliation_interval``
     **Type**: Integer (seconds)
@@ -632,6 +758,7 @@ Edit ``/etc/neutron/neutron.conf``:
 
    [l2vni]
    enable_l2vni_trunk_reconciliation = True
+   enable_l2vni_trunk_reconciliation_events = True
    l2vni_reconciliation_interval = 300
    l2vni_auto_create_networks = True
    l2vni_subport_anchor_network_type = geneve
@@ -672,16 +799,27 @@ Check logs for successful reconciliation:
 
 .. code-block:: bash
 
-   journalctl -u ironic-neutron-agent -f | grep L2VNI
+   journalctl -u ironic-neutron-agent -f | grep -E "L2VNI|OVN event"
 
 You should see:
 
 .. code-block:: text
 
+   Registered OVN event handler for L2VNI localnet port creation
    Started L2VNI trunk reconciliation loop (interval: 300s, initial delay: 345s with 45s jitter)
    Starting L2VNI trunk reconciliation
    Discovered trunk l2vni-trunk-network-node-1-physnet1
    Added subport port-uuid (VLAN 100) to trunk trunk-uuid
+   L2VNI trunk reconciliation completed successfully
+
+When a baremetal port is bound and a localnet port is created, you should see
+event-driven reconciliation:
+
+.. code-block:: text
+
+   OVN localnet port CREATE event: neutron-abc123-localnet-physnet1 (network: abc123, owned: True)
+   Triggering L2VNI trunk reconciliation due to localnet port CREATE event
+   Starting L2VNI trunk reconciliation
    L2VNI trunk reconciliation completed successfully
 
 Step 6: Create Test Overlay Network
@@ -736,6 +874,18 @@ Log Messages
    Discovered trunk l2vni-trunk-system-1-physnet1
    Added subport port-123 (VLAN 100) to trunk trunk-456
    L2VNI trunk reconciliation completed successfully
+
+**OVN Event-Driven Reconciliation:**
+
+.. code-block:: text
+
+   Registered OVN event handler for L2VNI localnet port creation
+   OVN localnet port CREATE event: neutron-abc123-localnet-physnet1 (network: abc123, owned: True)
+   Triggering L2VNI trunk reconciliation due to localnet port CREATE event
+   Starting L2VNI trunk reconciliation
+   L2VNI trunk reconciliation completed successfully
+   OVN localnet port DELETE event: neutron-abc123-localnet-physnet1 (network: abc123, owned: True)
+   Triggering L2VNI trunk reconciliation due to localnet port DELETE event
 
 **Event-Driven Fast Mode:**
 
@@ -986,6 +1136,49 @@ Agent Crashes During Reconciliation
    **Solution**: Check network connectivity to Neutron/OVN. Review timeout
    settings.
 
+OVN Event Reconciliation Not Working
+-------------------------------------
+
+**Symptom**: No event-driven reconciliation logs, only periodic reconciliation.
+
+**Check Logs:**
+
+.. code-block:: bash
+
+   journalctl -u ironic-neutron-agent | grep "OVN event handler"
+
+**Possible Causes:**
+
+1. **Feature disabled**: ``enable_l2vni_trunk_reconciliation_events = False``
+
+   **Solution**: Set to ``True`` in config and restart agent.
+
+2. **OVN IDL not available**: Agent cannot connect to OVN Northbound database.
+
+   **Solution**: Check OVN connection settings. Verify OVN services are running
+   and accessible. Check for error messages about OVN connection failures.
+
+3. **Event handler registration failed**: Agent logged warning about IDL not
+   supporting event handlers.
+
+   **Solution**: This indicates the OVN IDL connection was not established at
+   agent startup. Check OVN connectivity and restart the agent. If the problem
+   persists, check for OVN version compatibility issues.
+
+**Expected Behavior:**
+
+When working correctly, you should see this log message at agent startup:
+
+.. code-block:: text
+
+   Registered OVN event handler for L2VNI localnet port creation
+
+If you see this warning instead, event-driven reconciliation is not active:
+
+.. code-block:: text
+
+   OVN IDL does not support event handlers, falling back to periodic reconciliation only
+
 Upgrade Considerations
 ======================
 
@@ -1056,11 +1249,27 @@ Compatibility
 Disabling the Feature
 ---------------------
 
-To disable trunk reconciliation:
+The agent supports flexible configuration of reconciliation mechanisms:
+
+**To disable event-driven L2VNI trunk reconciliation only (keep periodic):**
+
+1. Set ``enable_l2vni_trunk_reconciliation_events = False`` in config
+2. Restart ironic-neutron-agent
+3. Event-driven reconciliation stops; periodic reconciliation continues
+
+**To disable periodic reconciliation only (keep event-driven):**
 
 1. Set ``enable_l2vni_trunk_reconciliation = False`` in config
 2. Restart ironic-neutron-agent
-3. Reconciliation stops; existing trunks remain
+3. Periodic reconciliation stops; event-driven reconciliation continues
+4. Note: Without periodic reconciliation, there is no safety net for missed events
+
+**To disable trunk reconciliation completely:**
+
+1. Set both ``enable_l2vni_trunk_reconciliation = False`` and
+   ``enable_l2vni_trunk_reconciliation_events = False`` in config
+2. Restart ironic-neutron-agent
+3. All reconciliation stops; existing trunks remain unchanged
 
 To fully clean up:
 
