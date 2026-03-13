@@ -67,6 +67,10 @@ class FakeOVNCommand:
         self.result = result
 
     def execute(self, check_error=False):
+        if check_error and self.result is None:
+            from ovsdbapp.backend.ovs_idl import idlutils
+            raise idlutils.RowNotFound(table='Unknown', col='name',
+                                       match='unknown')
         return self.result
 
 

@@ -1,11 +1,8 @@
 ---
 fixes:
   - |
-    Fixes LP#2144061 where HA chassis group alignment reconciliation would
-    fail to look up baremetal ports in OVN, causing RowNotFound exceptions.
-    The issue was that port lookups were using raw Neutron port UUIDs instead
-    of OVN's "neutron-" prefixed naming convention. The reconciliation now
-    correctly uses ovn_utils.ovn_name() to convert port IDs to OVN names,
-    and also handles any remaining RowNotFound exceptions gracefully by
-    continuing to check other ports instead of short-circuiting the entire
-    network reconciliation.
+    Fixed HA chassis group alignment reconciliation to properly look up ports
+    in OVN using the correct "neutron-" prefixed naming convention. Port
+    lookups now handle RowNotFound exceptions gracefully and prevent misleading
+    ERROR logs for expected conditions. See
+    `bug 2144061 <https://bugs.launchpad.net/networking-baremetal/+bug/2144061>`_.

@@ -649,20 +649,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
             try:
                 lsp = ovn_nb_idl.lsp_get(
                     ovn_utils.ovn_name(port.id)).execute(check_error=True)
-                if lsp:
-                    found_any_lsp = True
-                    if hasattr(lsp, 'ha_chassis_group'):
-                        ha_group = lsp.ha_chassis_group
-                        if ha_group:
-                            bm_ha_chassis_group = ha_group[0] if isinstance(
-                                ha_group, list) else ha_group
-                            LOG.debug("Found HA chassis group %s from port %s",
-                                      bm_ha_chassis_group, port.id)
-                            break
             except idlutils.RowNotFound:
-                # Port not found in OVN - this is expected if the port is
-                # not bound to the OVN mechanism driver (e.g., bound only
-                # to baremetal driver) or was recently deleted.
                 LOG.debug("Baremetal port %s not found in OVN (may not be "
                           "bound to OVN driver), skipping", port.id)
                 continue
@@ -670,6 +657,16 @@ class BaremetalNeutronAgent(service.ServiceBase):
                 LOG.debug("Could not get HA chassis group from port %s",
                           port.id, exc_info=True)
                 continue
+
+            found_any_lsp = True
+            if hasattr(lsp, 'ha_chassis_group'):
+                ha_group = lsp.ha_chassis_group
+                if ha_group:
+                    bm_ha_chassis_group = ha_group[0] if isinstance(
+                        ha_group, list) else ha_group
+                    LOG.debug("Found HA chassis group %s from port %s",
+                              bm_ha_chassis_group, port.id)
+                    break
 
         if not found_any_lsp:
             LOG.debug("Could not find any baremetal ports in OVN for "
@@ -701,14 +698,18 @@ class BaremetalNeutronAgent(service.ServiceBase):
         # Check and update each router port's HA chassis group
         for rport in router_ports:
             try:
-                lrp_name = f'lrp-{rport.id}'
+                lrp_name = ovn_utils.ovn_lrouter_port_name(rport.id)
                 lrp = ovn_nb_idl.lrp_get(lrp_name).execute(check_error=True)
+            except idlutils.RowNotFound:
+                LOG.debug("Logical router port %s not found in OVN",
+                          lrp_name)
+                continue
+            except (ovs_exc.OvsdbAppException, RuntimeError, AttributeError):
+                LOG.debug("Could not get router port %s",
+                          lrp_name, exc_info=True)
+                continue
 
-                if not lrp:
-                    LOG.debug("Logical router port %s not found in OVN",
-                              lrp_name)
-                    continue
-
+            try:
                 current_ha_group = None
                 if hasattr(lrp, 'ha_chassis_group'):
                     ha_group = lrp.ha_chassis_group

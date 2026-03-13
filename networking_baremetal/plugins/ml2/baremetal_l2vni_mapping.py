@@ -285,8 +285,8 @@ class L2vniMechanismDriver(api.MechanismDriver):
             port_name = _get_port_name(ls_name, physnet)
 
             # Check if localnet port already exists
-            existing_port = ovn_client._nb_idl.lsp_get(port_name).execute(
-                check_error=False)
+            existing_port = ovn_client._nb_idl.lookup(
+                'Logical_Switch_Port', port_name, default=None)
 
             if existing_port:
                 # Get local chassis name for validation
@@ -418,8 +418,8 @@ class L2vniMechanismDriver(api.MechanismDriver):
             port_name = _get_port_name(ls_name, physnet)
 
             # Check if localnet port exists
-            existing_port = ovn_client._nb_idl.lsp_get(port_name).execute(
-                check_error=False)
+            existing_port = ovn_client._nb_idl.lookup(
+                'Logical_Switch_Port', port_name, default=None)
 
             if not existing_port:
                 LOG.debug("Localnet port %s does not exist, nothing to "
