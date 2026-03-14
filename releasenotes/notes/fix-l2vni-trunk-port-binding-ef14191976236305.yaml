@@ -1,0 +1,8 @@
+---
+fixes:
+  - |
+    Fixed L2VNI trunk port binding to properly configure switch ports via
+    networking-generic-switch. Anchor ports now include ``local_link_information``
+    in their binding profile, and subports have ``binding:host_id`` set to enable
+    ML2 plugin binding. Existing trunks are automatically reconciled. See
+    `bug 2144387 <https://bugs.launchpad.net/networking-baremetal/+bug/2144387>`_.

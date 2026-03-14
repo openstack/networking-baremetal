@@ -417,18 +417,18 @@ class L2VNITrunkManager:
         :param physnet: Physical network name
         :returns: Trunk ID or None
         """
+        # Always reconcile anchor port first (creates or updates existing)
+        anchor_port_id = self._find_or_create_anchor_port(system_id, physnet)
+        if not anchor_port_id:
+            LOG.warning("Cannot find or create anchor port for "
+                        "chassis %s physnet %s", system_id, physnet)
+            return None
+
         # Try to find existing trunk
         trunk_name = _get_trunk_name(system_id, physnet)
         trunks = self.neutron.network.trunks(name=trunk_name)
         for trunk in trunks:
             return trunk.id
-
-        # Need to create trunk - first need anchor port
-        anchor_port_id = self._find_or_create_anchor_port(system_id, physnet)
-        if not anchor_port_id:
-            LOG.warning("Cannot create trunk without anchor port for "
-                        "chassis %s physnet %s", system_id, physnet)
-            return None
 
         # Create trunk
         try:
@@ -468,6 +468,27 @@ class L2VNITrunkManager:
         # Try to find existing port
         ports = self.neutron.network.ports(name=port_name)
         for port in ports:
+            binding_profile = port.binding_profile or {}
+            current_local_link_info = binding_profile.get(
+                'local_link_information')
+
+            # Early return if already configured correctly
+            if current_local_link_info:
+                return port.id
+
+            # Port exists but missing local_link_information
+            local_link = self._get_local_link_connection(system_id, physnet)
+            if local_link:
+                binding_profile['local_link_information'] = [local_link]
+                self.neutron.network.update_port(
+                    port.id, binding_profile=binding_profile)
+                LOG.info("Updated anchor port %s with missing "
+                         "local_link_information", port.id)
+            else:
+                LOG.warning(
+                    "Anchor port %s missing local_link_information for "
+                    "chassis %s physnet %s", port.id, system_id, physnet)
+
             return port.id
 
         # Need to create - find ha_group network for this chassis
@@ -476,6 +497,22 @@ class L2VNITrunkManager:
             LOG.warning("Cannot find ha_chassis_group network for "
                         "chassis %s", system_id)
             return None
+
+        # Get local_link_connection for new anchor port
+        local_link = self._get_local_link_connection(system_id, physnet)
+        if not local_link:
+            LOG.warning("Could not determine local_link_connection for "
+                        "chassis %s physnet %s. Port will be created but "
+                        "may not bind properly when subports are added.",
+                        system_id, physnet)
+
+        # Build binding profile
+        binding_profile = {
+            'system_id': system_id,
+            'physical_network': physnet
+        }
+        if local_link:
+            binding_profile['local_link_information'] = [local_link]
 
         # Create anchor port
         try:
@@ -487,10 +524,7 @@ class L2VNITrunkManager:
                 device_owner=DEVICE_OWNER_L2VNI_ANCHOR,
                 admin_state_up=True,
                 binding_vnic_type=portbindings.VNIC_BAREMETAL,
-                binding_profile={
-                    'system_id': system_id,
-                    'physical_network': physnet
-                }
+                binding_profile=binding_profile
             )
             LOG.debug("Created anchor port %s", port.id)
             return port.id
@@ -830,17 +864,16 @@ class L2VNITrunkManager:
         """
         port_name = _get_subport_name(system_id, physnet, vlan_id)
 
-        # Get local_link_connection
-        local_link = self._get_local_link_connection(system_id, physnet)
+        # Get chassis hostname for binding
+        hostname = self._get_chassis_hostname(system_id)
+        if not hostname:
+            LOG.warning("Could not determine hostname for chassis %s. "
+                        "Subport will not be bound.", system_id)
 
         try:
             # Create port
             LOG.debug("Creating subport %s for trunk %s",
                       port_name, trunk_id)
-
-            binding_profile = {'physical_network': physnet}
-            if local_link:
-                binding_profile['local_link_connection'] = local_link
 
             port = self.neutron.network.create_port(
                 name=port_name,
@@ -848,8 +881,17 @@ class L2VNITrunkManager:
                 device_owner=DEVICE_OWNER_L2VNI_SUBPORT,
                 admin_state_up=True,
                 binding_vnic_type='baremetal',
-                binding_profile=binding_profile
+                binding_profile={'physical_network': physnet}
             )
+
+            # Set binding:host_id on subport if we have a hostname
+            if hostname:
+                self.neutron.network.update_port(
+                    port.id,
+                    **{'binding:host_id': hostname}
+                )
+                LOG.debug("Set binding:host_id=%s for subport %s",
+                          hostname, port.id)
 
             # Add as subport
             self.neutron.network.add_trunk_subports(

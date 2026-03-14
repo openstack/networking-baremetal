@@ -96,6 +96,7 @@ class FakePort:
                  device_id=None):
         self.id = port_id
         self.device_owner = device_owner
+        self.binding_profile = binding_profile or {}
         self.binding = {'profile': binding_profile or {}}
         self.device_id = device_id
 
@@ -407,13 +408,19 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         self.mock_ovn_sb.tables['Chassis'].rows.values\
             .return_value = [chassis]
 
-        # Mock trunks
+        # Mock trunks with anchor port that has local_link_information
+        local_link = {
+            'switch_id': '00:11:22:33:44:55',
+            'port_id': 'Ethernet1/5',
+            'switch_info': 'switch1'
+        }
         anchor_port = FakePort(
             'anchor-port-id',
             l2vni_trunk_manager.DEVICE_OWNER_L2VNI_ANCHOR,
             binding_profile={
                 'system_id': 'system-1',
-                'physical_network': 'physnet1'
+                'physical_network': 'physnet1',
+                'local_link_information': [local_link]
             }
         )
         trunk = FakeTrunk('trunk-id-1', 'anchor-port-id',
@@ -960,12 +967,17 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         self.mock_neutron.network.create_trunk.side_effect = (
             sdkexc.SDKException('Neutron error'))
 
-        # Mock ha_group network lookup
+        # Mock ha_group network lookup and local_link_connection
         with mock.patch.object(
                 self.manager,
                 '_find_ha_group_network_for_chassis',
                 autospec=True,
-                return_value='network-id'):
+                return_value='network-id'), \
+             mock.patch.object(
+                self.manager,
+                '_get_local_link_connection',
+                autospec=True,
+                return_value=None):
             result = self.manager._find_or_create_trunk(
                 'system-1', 'physnet1')
             self.assertIsNone(result)
@@ -998,3 +1010,283 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
 
         # Should handle gracefully and return empty or minimal result
         self.assertIsInstance(result, dict)
+
+    def test_anchor_port_creation_includes_local_link_connection(self):
+        """Test anchor port creation includes local_link_connection."""
+        system_id = 'system-1'
+        physnet = 'physnet1'
+
+        # Mock no existing port
+        self.mock_neutron.network.ports.return_value = []
+
+        # Mock ha_group network
+        ha_network = FakeNetwork('ha-net-id', 'l2vni-ha-group-group1')
+        self.mock_neutron.network.networks.return_value = [ha_network]
+
+        # Setup OVN data for ha_group lookup
+        chassis = FakeChassis('chassis-1', system_id, hostname='host1')
+        ha_chassis = FakeHAChassis(system_id)
+        ha_group = FakeHAChassisGroup('group1', [ha_chassis])
+        self.mock_ovn_nb.tables['HA_Chassis_Group'].rows.values\
+            .return_value = [ha_group]
+        self.mock_ovn_sb.tables['Chassis'].rows.values\
+            .return_value = [chassis]
+
+        # Mock local_link_connection discovery
+        local_link = {
+            'switch_id': '00:11:22:33:44:55',
+            'port_id': 'Ethernet1/5',
+            'switch_info': 'switch1'
+        }
+        with mock.patch.object(
+                self.manager,
+                '_get_local_link_connection',
+                autospec=True,
+                return_value=local_link):
+
+            # Mock port creation
+            created_port = FakePort(
+                'anchor-port-id',
+                l2vni_trunk_manager.DEVICE_OWNER_L2VNI_ANCHOR)
+            self.mock_neutron.network.create_port.return_value = created_port
+
+            result = self.manager._find_or_create_anchor_port(
+                system_id, physnet)
+
+        # Should create port with local_link_information in binding profile
+        self.assertEqual('anchor-port-id', result)
+        self.mock_neutron.network.create_port.assert_called_once()
+        call_kwargs = self.mock_neutron.network.create_port.call_args[1]
+        self.assertIn('binding_profile', call_kwargs)
+        self.assertIn('local_link_information',
+                      call_kwargs['binding_profile'])
+        self.assertEqual(
+            [local_link],
+            call_kwargs['binding_profile']['local_link_information'])
+
+    def test_anchor_port_creation_without_local_link_connection(self):
+        """Test anchor port creation when local_link_connection unavailable."""
+        system_id = 'system-1'
+        physnet = 'physnet1'
+
+        # Mock no existing port
+        self.mock_neutron.network.ports.return_value = []
+
+        # Mock ha_group network
+        ha_network = FakeNetwork('ha-net-id', 'l2vni-ha-group-group1')
+        self.mock_neutron.network.networks.return_value = [ha_network]
+
+        # Setup OVN data
+        chassis = FakeChassis('chassis-1', system_id, hostname='host1')
+        ha_chassis = FakeHAChassis(system_id)
+        ha_group = FakeHAChassisGroup('group1', [ha_chassis])
+        self.mock_ovn_nb.tables['HA_Chassis_Group'].rows.values\
+            .return_value = [ha_group]
+        self.mock_ovn_sb.tables['Chassis'].rows.values\
+            .return_value = [chassis]
+
+        # Mock local_link_connection discovery returns None
+        with mock.patch.object(
+                self.manager,
+                '_get_local_link_connection',
+                autospec=True,
+                return_value=None):
+
+            # Mock port creation
+            created_port = FakePort(
+                'anchor-port-id',
+                l2vni_trunk_manager.DEVICE_OWNER_L2VNI_ANCHOR)
+            self.mock_neutron.network.create_port.return_value = created_port
+
+            result = self.manager._find_or_create_anchor_port(
+                system_id, physnet)
+
+        # Should still create port, but without local_link_connection
+        self.assertEqual('anchor-port-id', result)
+        self.mock_neutron.network.create_port.assert_called_once()
+        call_kwargs = self.mock_neutron.network.create_port.call_args[1]
+        self.assertIn('binding_profile', call_kwargs)
+        self.assertNotIn('local_link_information',
+                         call_kwargs['binding_profile'])
+
+    def test_anchor_port_reconciliation_adds_missing_local_link(self):
+        """Test reconciliation updates anchor port missing LLC.
+
+        Updates existing anchor ports that are missing local_link_information
+        in their binding profile.
+        """
+        system_id = 'system-1'
+        physnet = 'physnet1'
+
+        # Mock existing port WITHOUT local_link_information
+        existing_port = FakePort('anchor-port-id',
+                                 l2vni_trunk_manager.DEVICE_OWNER_L2VNI_ANCHOR,
+                                 binding_profile={'system_id': system_id,
+                                                  'physical_network': physnet})
+        self.mock_neutron.network.ports.return_value = [existing_port]
+
+        # Mock local_link_connection discovery
+        local_link = {
+            'switch_id': '00:11:22:33:44:55',
+            'port_id': 'Ethernet1/5',
+            'switch_info': 'switch1'
+        }
+        with mock.patch.object(
+                self.manager,
+                '_get_local_link_connection',
+                autospec=True,
+                return_value=local_link):
+
+            result = self.manager._find_or_create_anchor_port(
+                system_id, physnet)
+
+        # Should return existing port and update it
+        self.assertEqual('anchor-port-id', result)
+        self.mock_neutron.network.update_port.assert_called_once()
+        call_args = self.mock_neutron.network.update_port.call_args
+        self.assertEqual('anchor-port-id', call_args[0][0])
+        updated_profile = call_args[1]['binding_profile']
+        self.assertIn('local_link_information', updated_profile)
+        self.assertEqual([local_link],
+                         updated_profile['local_link_information'])
+
+    def test_anchor_port_reconciliation_skips_correct_ports(self):
+        """Test reconciliation skips correctly configured anchor ports.
+
+        Verifies that anchor ports with local_link_information already set
+        are not updated.
+        """
+        system_id = 'system-1'
+        physnet = 'physnet1'
+
+        local_link = {
+            'switch_id': '00:11:22:33:44:55',
+            'port_id': 'Ethernet1/5',
+            'switch_info': 'switch1'
+        }
+
+        # Mock existing port WITH local_link_information
+        existing_port = FakePort('anchor-port-id',
+                                 l2vni_trunk_manager.DEVICE_OWNER_L2VNI_ANCHOR,
+                                 binding_profile={
+                                     'system_id': system_id,
+                                     'physical_network': physnet,
+                                     'local_link_information': [local_link]
+                                 })
+        self.mock_neutron.network.ports.return_value = [existing_port]
+
+        result = self.manager._find_or_create_anchor_port(system_id, physnet)
+
+        # Should return existing port without updating
+        self.assertEqual('anchor-port-id', result)
+        self.mock_neutron.network.update_port.assert_not_called()
+
+    def test_existing_trunk_reconciles_anchor_port(self):
+        """Test that existing trunks still reconcile their anchor ports.
+
+        Verifies that when a trunk already exists, _find_or_create_trunk()
+        still calls _find_or_create_anchor_port() to reconcile the anchor
+        port's binding profile. This ensures existing trunks created before
+        the local_link_connection fix get updated.
+        """
+        system_id = 'system-1'
+        physnet = 'physnet1'
+
+        # Mock existing anchor port WITHOUT local_link_connection
+        existing_anchor_port = FakePort(
+            'anchor-port-id',
+            l2vni_trunk_manager.DEVICE_OWNER_L2VNI_ANCHOR,
+            binding_profile={
+                'system_id': system_id,
+                'physical_network': physnet
+            })
+
+        # Mock existing trunk
+        existing_trunk = FakeTrunk(
+            'trunk-id',
+            'anchor-port-id',
+            name='l2vni-trunk-system-1-physnet1')
+
+        self.mock_neutron.network.ports.return_value = [existing_anchor_port]
+        self.mock_neutron.network.trunks.return_value = [existing_trunk]
+
+        # Mock local_link_connection discovery
+        local_link = {
+            'switch_id': '00:11:22:33:44:55',
+            'port_id': 'Ethernet1/5',
+            'switch_info': 'switch1'
+        }
+        with mock.patch.object(
+                self.manager,
+                '_get_local_link_connection',
+                autospec=True,
+                return_value=local_link):
+
+            result = self.manager._find_or_create_trunk(system_id, physnet)
+
+        # Should return existing trunk
+        self.assertEqual('trunk-id', result)
+
+        # Should have updated the anchor port with local_link_information
+        self.mock_neutron.network.update_port.assert_called_once()
+        call_args = self.mock_neutron.network.update_port.call_args
+        self.assertEqual('anchor-port-id', call_args[0][0])
+        updated_profile = call_args[1]['binding_profile']
+        self.assertIn('local_link_information', updated_profile)
+        self.assertEqual([local_link],
+                         updated_profile['local_link_information'])
+
+    def test_subport_creation_sets_binding_host_id(self):
+        """Test subport creation sets binding:host_id to chassis hostname."""
+        trunk_id = 'trunk-id'
+        system_id = 'system-1'
+        physnet = 'physnet1'
+        vlan_id = 100
+        anchor_network_id = 'anchor-net-id'
+
+        # Setup chassis with hostname
+        chassis = FakeChassis('chassis-1', system_id, hostname='devstack')
+        self.mock_ovn_sb.tables['Chassis'].rows.values\
+            .return_value = [chassis]
+
+        # Mock port creation
+        created_port = FakePort('subport-id',
+                                l2vni_trunk_manager.DEVICE_OWNER_L2VNI_SUBPORT)
+        self.mock_neutron.network.create_port.return_value = created_port
+
+        self.manager._add_subport(trunk_id, system_id, physnet, vlan_id,
+                                  anchor_network_id)
+
+        # Should create port and set binding:host_id
+        self.mock_neutron.network.create_port.assert_called_once()
+        self.mock_neutron.network.update_port.assert_called_once()
+
+        # Check update_port was called with binding:host_id
+        update_call = self.mock_neutron.network.update_port.call_args
+        self.assertEqual('subport-id', update_call[0][0])
+        self.assertIn('binding:host_id', update_call[1])
+        self.assertEqual('devstack', update_call[1]['binding:host_id'])
+
+    def test_subport_creation_without_hostname(self):
+        """Test subport creation when hostname cannot be determined."""
+        trunk_id = 'trunk-id'
+        system_id = 'system-1'
+        physnet = 'physnet1'
+        vlan_id = 100
+        anchor_network_id = 'anchor-net-id'
+
+        # Mock empty chassis table (hostname lookup fails)
+        self.mock_ovn_sb.tables['Chassis'].rows.values.return_value = []
+
+        # Mock port creation
+        created_port = FakePort('subport-id',
+                                l2vni_trunk_manager.DEVICE_OWNER_L2VNI_SUBPORT)
+        self.mock_neutron.network.create_port.return_value = created_port
+
+        self.manager._add_subport(trunk_id, system_id, physnet, vlan_id,
+                                  anchor_network_id)
+
+        # Should create port but NOT call update_port (no hostname)
+        self.mock_neutron.network.create_port.assert_called_once()
+        # update_port should not be called since we have no hostname
+        self.mock_neutron.network.update_port.assert_not_called()

@@ -132,8 +132,14 @@ Each (chassis, physical_network) combination gets an anchor port named
 
 - Is created on the ha_chassis_group network
 - Has device_owner ``baremetal:l2vni_anchor``
-- Contains binding profile with system_id and physical_network
+- Contains binding profile with system_id, physical_network, and local_link_information
 - Serves as the parent port for the trunk
+- Does not have binding:host_id set (not required for switch configuration)
+
+The local_link_information in the anchor port's binding profile is used by
+networking-generic-switch to configure the physical switch port when subports
+are added to the trunk. Note that local_link_information is a list containing
+one or more link connection dictionaries.
 
 **Trunk Ports**
 
@@ -147,8 +153,12 @@ Each subport represents one overlay network's VLAN segment:
 - Named ``l2vni-subport-{system_id}-{physnet}-vlan{vlan_id}``
 - Created on the subport anchor network (``l2vni-subport-anchor`` by default)
 - Has device_owner ``baremetal:l2vni_subport``
-- Includes binding profile with local_link_connection information
+- Has binding:host_id set to the chassis hostname for proper ML2 binding
 - Segmentation type is always ``vlan``
+
+Note: networking-generic-switch uses the parent port's (anchor port's)
+local_link_information when configuring the physical switch, so subports do
+not need local_link_information in their binding profile.
 
 **Subport Anchor Network**
 
@@ -855,7 +865,7 @@ Subports Not Added
 Missing Switch Information
 ---------------------------
 
-**Symptom**: Subports created but binding profile lacks local_link_connection.
+**Symptom**: Ports created but binding profile lacks local_link_information.
 
 **Possible Causes:**
 
