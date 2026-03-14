@@ -157,7 +157,8 @@ class L2VNITrunkManager:
             # Build trunk map: {(system_id, physnet): trunk_id}
             trunk_map = self._discover_trunks()
 
-            # Calculate required VLANs: {(system_id, physnet): set(vlan_ids)}
+            # Calculate required VLANs with VNI info:
+            # {(system_id, physnet): {vlan_id: vni}}
             required_vlans = self._calculate_required_vlans()
 
             # Reconcile subports
@@ -213,6 +214,15 @@ class L2VNITrunkManager:
                 LOG.error("Cannot reconcile VLAN without anchor network")
                 return
 
+            # Get VNI for this network if adding
+            vni = None
+            if action == 'add':
+                vni = self._get_vni_for_network(network_id)
+                if not vni:
+                    LOG.warning(
+                        "No VNI found for network %s, subport will "
+                        "not have L2VNI mapping configured", network_id)
+
             # Find all chassis that have this physnet
             chassis_set = self._get_all_chassis_with_physnet(physnet)
             if not chassis_set:
@@ -235,13 +245,14 @@ class L2VNITrunkManager:
                 if action == 'add':
                     self._ensure_single_subport(
                         trunk_id, system_id, physnet, vlan_id,
-                        anchor_network_id)
+                        anchor_network_id, vni=vni)
                 elif action == 'remove':
                     self._remove_single_subport(
                         trunk_id, system_id, physnet, vlan_id)
 
-            LOG.info("Completed targeted reconciliation for %s VLAN %d on "
-                     "physnet %s", action, vlan_id, physnet)
+            LOG.info("Completed targeted reconciliation for %s VLAN %d "
+                     "(VNI: %s) on physnet %s",
+                     action, vlan_id, vni if vni else 'none', physnet)
 
         except (sdkexc.SDKException, ovs_exc.OvsdbAppException):
             LOG.exception(
@@ -656,54 +667,102 @@ class L2VNITrunkManager:
         - There's a localnet port for a network on that physnet
         - The chassis is in the ha_chassis_group for a router on that network
 
-        :returns: dict {(system_id, physnet): set(vlan_ids)}
+        For each required VLAN, also captures the associated VNI from the
+        network's overlay segment (if present) to enable L2VNI mapping
+        configuration on switches.
+
+        :returns: dict {(system_id, physnet): {vlan_id: vni}}
+                  where vni is an integer for L2VNI networks or None for
+                  pure VLAN networks
         """
-        required_vlans = {}
+        chassis_vlan_vni_map = {}
 
-        # Get all networks with VLAN segments
-        networks_with_vlans = self._get_networks_with_vlan_segments()
+        networks_with_segments = self._get_networks_with_segments()
 
-        for network_id, segments in networks_with_vlans.items():
-            for segment in segments:
-                if segment.network_type != n_const.TYPE_VLAN:
-                    continue
+        for network_id, segment_info in networks_with_segments.items():
+            # Extract VNI from overlay segments
+            vni_segments = segment_info['vni_segments']
+            vni = None
 
+            if vni_segments:
+                # Use the first overlay segment
+                vni = vni_segments[0].segmentation_id
+
+                # Warn if multiple overlay segments exist (unusual config)
+                if len(vni_segments) > 1:
+                    LOG.warning(
+                        "Network %s has %d overlay segments. Only the first "
+                        "(VNI %s, type %s) will be used for L2VNI mapping. "
+                        "Multiple overlay segments per network is not "
+                        "supported.",
+                        network_id, len(vni_segments), vni,
+                        vni_segments[0].network_type)
+
+            for segment in segment_info['vlan_segments']:
                 physnet = segment.physical_network
                 vlan_id = segment.segmentation_id
 
-                # Find chassis that need this VLAN
                 chassis_set = self._find_chassis_for_network(
                     network_id, physnet)
 
                 for system_id in chassis_set:
-                    # Skip chassis this agent doesn't manage (hash ring)
                     if not self._should_manage_chassis(system_id):
                         continue
 
                     key = (system_id, physnet)
-                    required_vlans.setdefault(key, set()).add(vlan_id)
+                    if key not in chassis_vlan_vni_map:
+                        chassis_vlan_vni_map[key] = {}
+                    chassis_vlan_vni_map[key][vlan_id] = vni
 
-        return required_vlans
+        return chassis_vlan_vni_map
 
-    def _get_networks_with_vlan_segments(self):
-        """Get all networks that have dynamic VLAN segments.
+    def _get_networks_with_segments(self):
+        """Get networks with their VLAN and overlay segments.
 
-        :returns: dict {network_id: [segment objects]}
+        :returns: dict {network_id: {
+            'vlan_segments': [segment objects],
+            'vni_segments': [segment objects]
+        }}
         """
         networks = {}
 
         try:
-            # Get all segments
             segments = self.neutron.network.segments()
             for segment in segments:
+                network_id = segment.network_id
+                if network_id not in networks:
+                    networks[network_id] = {
+                        'vlan_segments': [],
+                        'vni_segments': []
+                    }
+
                 if segment.network_type == n_const.TYPE_VLAN:
-                    network_id = segment.network_id
-                    networks.setdefault(network_id, []).append(segment)
+                    networks[network_id]['vlan_segments'].append(segment)
+                elif segment.network_type in [n_const.TYPE_VXLAN,
+                                              n_const.TYPE_GENEVE]:
+                    networks[network_id]['vni_segments'].append(segment)
 
         except sdkexc.SDKException:
-            LOG.exception("Failed to get networks with VLAN segments")
+            LOG.exception("Failed to get networks with VLAN and overlay "
+                          "segments")
 
         return networks
+
+    def _get_vni_for_network(self, network_id):
+        """Get VNI from network's overlay segment.
+
+        :param network_id: Neutron network UUID
+        :returns: VNI (int) or None
+        """
+        try:
+            segments = self.neutron.network.segments(network_id=network_id)
+            for segment in segments:
+                if segment.network_type in [n_const.TYPE_VXLAN,
+                                            n_const.TYPE_GENEVE]:
+                    return segment.segmentation_id
+        except sdkexc.SDKException:
+            LOG.exception("Failed to get VNI for network %s", network_id)
+        return None
 
     def _find_chassis_for_network(self, network_id, physnet):
         """Find chassis that need a specific network's VLAN.
@@ -865,7 +924,8 @@ class L2VNITrunkManager:
         """Reconcile subports to match required VLAN state.
 
         :param trunk_map: dict {(system_id, physnet): trunk_id}
-        :param required_vlans: dict {(system_id, physnet): set(vlan_ids)}
+        :param required_vlans: dict {(system_id, physnet): {vlan_id: vni}}
+                               where vni may be None for non-L2VNI networks
         """
         subport_anchor_net = self._get_subport_anchor_network_id()
         if not subport_anchor_net:
@@ -873,9 +933,9 @@ class L2VNITrunkManager:
             return
 
         for (system_id, physnet), trunk_id in trunk_map.items():
-            required = required_vlans.get((system_id, physnet), set())
+            vlan_vni_map = required_vlans.get((system_id, physnet), {})
             self._reconcile_trunk_subports(
-                trunk_id, system_id, physnet, required, subport_anchor_net)
+                trunk_id, system_id, physnet, vlan_vni_map, subport_anchor_net)
 
     def _get_subport_anchor_network_id(self):
         """Get the subport anchor network ID.
@@ -889,13 +949,13 @@ class L2VNITrunkManager:
         return None
 
     def _reconcile_trunk_subports(self, trunk_id, system_id, physnet,
-                                  required_vlans, anchor_network_id):
+                                  vlan_vni_map, anchor_network_id):
         """Reconcile subports for a single trunk.
 
         :param trunk_id: Trunk UUID
         :param system_id: Chassis system-id
         :param physnet: Physical network name
-        :param required_vlans: set of required VLAN IDs
+        :param vlan_vni_map: dict {vlan_id: vni}
         :param anchor_network_id: Subport anchor network UUID
         """
         # Get current subports
@@ -907,18 +967,19 @@ class L2VNITrunkManager:
             LOG.exception("Failed to get trunk %s", trunk_id)
             return
 
-        # Add missing subports
-        for vlan_id in required_vlans - set(current_subports.keys()):
+        # Add missing subports with VNI
+        for vlan_id in vlan_vni_map.keys() - set(current_subports.keys()):
+            vni = vlan_vni_map.get(vlan_id)
             self._add_subport(trunk_id, system_id, physnet, vlan_id,
-                              anchor_network_id)
+                              anchor_network_id, vni=vni)
 
         # Remove extra subports
-        for vlan_id in set(current_subports.keys()) - required_vlans:
+        for vlan_id in set(current_subports.keys()) - vlan_vni_map.keys():
             self._remove_subport(trunk_id, current_subports[vlan_id],
                                  system_id, physnet, vlan_id)
 
     def _add_subport(self, trunk_id, system_id, physnet, vlan_id,
-                     anchor_network_id):
+                     anchor_network_id, vni=None):
         """Add a subport to a trunk.
 
         Subports are the trunk CHILDREN that attach to the shared
@@ -931,6 +992,7 @@ class L2VNITrunkManager:
         :param vlan_id: VLAN ID for segmentation
         :param anchor_network_id: Subport anchor network UUID (the shared
                                   network all subports attach to)
+        :param vni: VNI for L2VNI mapping (optional)
         """
         port_name = _get_subport_name(system_id, physnet, vlan_id)
 
@@ -942,8 +1004,13 @@ class L2VNITrunkManager:
 
         try:
             # Create port
-            LOG.debug("Creating subport %s for trunk %s",
-                      port_name, trunk_id)
+            LOG.debug("Creating subport %s for trunk %s (VNI: %s)",
+                      port_name, trunk_id, vni if vni else 'none')
+
+            # Build binding profile with VNI if available
+            binding_profile = {'physical_network': physnet}
+            if vni:
+                binding_profile['vni'] = vni
 
             port = self.neutron.network.create_port(
                 name=port_name,
@@ -951,7 +1018,7 @@ class L2VNITrunkManager:
                 device_owner=DEVICE_OWNER_L2VNI_SUBPORT,
                 admin_state_up=True,
                 binding_vnic_type='baremetal',
-                binding_profile={'physical_network': physnet}
+                binding_profile=binding_profile
             )
 
             # Set binding:host_id on subport if we have a hostname
@@ -970,8 +1037,8 @@ class L2VNITrunkManager:
                   'segmentation_type': 'vlan',
                   'segmentation_id': vlan_id}]
             )
-            LOG.debug("Added subport %s (VLAN %d) to trunk %s",
-                      port.id, vlan_id, trunk_id)
+            LOG.debug("Added subport %s (VLAN %d, VNI: %s) to trunk %s",
+                      port.id, vlan_id, vni if vni else 'none', trunk_id)
 
         except sdkexc.SDKException:
             LOG.exception("Failed to add subport for trunk %s VLAN %d",
@@ -1004,7 +1071,7 @@ class L2VNITrunkManager:
                           port_id, trunk_id)
 
     def _ensure_single_subport(self, trunk_id, system_id, physnet, vlan_id,
-                               anchor_network_id):
+                               anchor_network_id, vni=None):
         """Ensure a single subport exists on a trunk.
 
         Idempotent - checks if subport already exists before creating.
@@ -1014,6 +1081,7 @@ class L2VNITrunkManager:
         :param physnet: Physical network name
         :param vlan_id: VLAN ID for segmentation
         :param anchor_network_id: Subport anchor network UUID
+        :param vni: VNI for L2VNI mapping (optional)
         """
         try:
             trunk = self.neutron.network.get_trunk(trunk_id)
@@ -1026,7 +1094,7 @@ class L2VNITrunkManager:
 
             # Add the subport
             self._add_subport(trunk_id, system_id, physnet, vlan_id,
-                              anchor_network_id)
+                              anchor_network_id, vni=vni)
 
         except sdkexc.SDKException:
             LOG.exception("Failed to ensure subport for VLAN %d on trunk %s",
