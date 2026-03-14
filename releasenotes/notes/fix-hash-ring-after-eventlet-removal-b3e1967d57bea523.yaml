@@ -1,0 +1,14 @@
+---
+fixes:
+  - |
+    Fixed hash ring synchronization broken after eventlet removal. The agent
+    now uses ``service.Launcher`` for single-process execution instead of
+    ``service.launch()`` which spawns worker processes via fork. With forked
+    processes, the ``HashRingMemberManagerNotificationEndpoint`` class
+    variables (``members`` and ``hashring``) were not shared between the
+    parent process (handling OVN events and operations) and worker processes
+    (receiving heartbeat notifications), causing hash ring checks to always
+    fail in the parent process. Single-process execution ensures all threads
+    share the same memory space and class variables work correctly.
+    See `LP#2144384 <https://bugs.launchpad.net/networking-baremetal/+bug/2144384>`_
+    for details.
