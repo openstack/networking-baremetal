@@ -152,6 +152,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
 
     def start(self):
         LOG.info('Starting agent networking-baremetal.')
+        cfg.CONF.log_opt_values(LOG, logging.INFO)
         self.pool_listener.start()
         self.listener.start()
         self.notify_agents = loopingcall.FixedIntervalLoopingCall(
@@ -391,5 +392,10 @@ def main():
     common_config.init(sys.argv[1:])
     common_config.setup_logging()
     agent = BaremetalNeutronAgent()
-    launcher = service.launch(cfg.CONF, agent, restart_method='mutate')
+    # Use service.Launcher for single-process execution to ensure hash ring
+    # class variables are shared across all threads. service.launch() spawns
+    # worker processes via fork, which isolates class variables and breaks
+    # hash ring synchronization. See bug LP#2144384
+    launcher = service.Launcher(cfg.CONF, restart_method='mutate')
+    launcher.launch_service(agent)
     launcher.wait()
