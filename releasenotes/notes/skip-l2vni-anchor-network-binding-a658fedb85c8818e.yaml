@@ -1,0 +1,7 @@
+---
+other:
+  - |
+    The baremetal-l2vni ML2 driver now skips binding for ports on the
+    L2VNI anchor network (l2vni-subport-anchor). This prevents unnecessary
+    hierarchical binding attempts for metadata-only trunk subports. Switch
+    configuration continues to work via trunk callbacks.

@@ -50,7 +50,19 @@ baremetal_l2vni_opts = [
                     'binding will fail.'),
 ]
 
+# L2VNI trunk configuration options (shared with agent)
+l2vni_opts = [
+    cfg.StrOpt('l2vni_subport_anchor_network',
+               default='l2vni-subport-anchor',
+               help='Name of the shared network used for all trunk '
+                    'subports. This network is used to signal VLAN bindings '
+                    'to ML2 switch plugins and does not pass actual traffic. '
+                    'Ports on this network should not be bound by the L2VNI '
+                    'mechanism driver.'),
+]
+
 cfg.CONF.register_opts(baremetal_l2vni_opts, group='baremetal_l2vni')
+cfg.CONF.register_opts(l2vni_opts, group='l2vni')
 
 SUPPORTED_VNIC_TYPES = [portbindings.VNIC_BAREMETAL]
 
@@ -520,6 +532,19 @@ class L2vniMechanismDriver(api.MechanismDriver):
 
     def bind_port(self, context):
         if context.current[portbindings.VNIC_TYPE] not in SUPPORTED_VNIC_TYPES:
+            return
+
+        # Skip binding for ports on the L2VNI subport anchor network.
+        # The anchor network is a dummy/metadata network used to hold trunk
+        # subports. These ports don't need actual network connectivity or
+        # hierarchical binding - they just need to exist as Neutron ports
+        # so they can be added to trunks and trigger networking-generic-switch
+        # callbacks for switch configuration.
+        anchor_network_name = cfg.CONF.l2vni.l2vni_subport_anchor_network
+        if context.network.current['name'] == anchor_network_name:
+            LOG.debug("Skipping L2VNI binding for port %s on anchor "
+                      "network %s (anchor network ports are metadata only)",
+                      context.current['id'], anchor_network_name)
             return
 
         # Only bind overlay segments (vxlan, geneve) at the current level.
