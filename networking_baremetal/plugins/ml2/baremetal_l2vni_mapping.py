@@ -573,7 +573,7 @@ class L2vniMechanismDriver(api.MechanismDriver):
                       lower_segment.get(api.SEGMENTATION_ID),
                       physnet,
                       bind_segment.get(api.SEGMENTATION_ID))
-            if context.is_partial_segment(lower_segment):
+            if context._plugin.type_manager.is_partial_segment(lower_segment):
                 LOG.error("Lower segment in physical network %s is lacking a "
                           "segmentation ID.", physnet)
                 raise exc.InvalidInput(

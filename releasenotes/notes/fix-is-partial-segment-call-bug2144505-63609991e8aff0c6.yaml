@@ -1,0 +1,10 @@
+---
+fixes:
+  - |
+    Fixed incorrect ``is_partial_segment()`` call in the baremetal_l2vni
+    mechanism driver. The driver was calling ``context.is_partial_segment()``
+    which doesn't exist on PortContext. Changed to correctly call
+    ``context._plugin.type_manager.is_partial_segment()`` to access the
+    TypeDriver API. This bug was exposed when neutron started including
+    dynamic segments in the network context. For more details see
+    `bug 2144505 <https://bugs.launchpad.net/networking-baremetal/+bug/2144505>`_.
