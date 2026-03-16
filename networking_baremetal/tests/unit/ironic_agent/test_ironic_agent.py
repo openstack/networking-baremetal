@@ -53,12 +53,13 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         # Register agent config options (L2VNI and baremetal_agent)
         from networking_baremetal.agent import agent_config
         agent_config.register_agent_opts(self.conf.conf)
-        # Disable L2VNI and HA alignment for these tests
+        # Disable L2VNI, HA alignment, and router HA binding for these tests
         self.conf.config(group='l2vni',
                          enable_l2vni_trunk_reconciliation=False,
                          enable_l2vni_trunk_reconciliation_events=False)
         self.conf.config(group='baremetal_agent',
-                         enable_ha_chassis_group_alignment=False)
+                         enable_ha_chassis_group_alignment=False,
+                         enable_router_ha_binding=False)
 
     def test_get_template_node_state(self, mock_conn, mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()

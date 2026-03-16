@@ -14,6 +14,7 @@
 
 """OVN RowEvent handlers for L2VNI reconciliation."""
 
+from neutron.common.ovn import constants as ovn_const
 from neutron.plugins.ml2.drivers.ovn.mech_driver.ovsdb import ovsdb_monitor
 from oslo_log import log as logging
 from ovsdbapp.backend.ovs_idl import event as row_event
@@ -169,3 +170,111 @@ class LocalnetPortEvent(ovsdb_monitor.BaseEvent):
             return ls_name.replace('neutron-', '', 1)
         except (ValueError, AttributeError):
             return None
+
+
+class HAChassisGroupNetworkEvent(ovsdb_monitor.BaseEvent):
+    """Trigger router HA binding for HA Chassis group create/update.
+
+    Watches for CREATE and UPDATE events on HA_Chassis_Group table where
+    the group is network-level (has neutron:network_id in external_ids but
+    not neutron:router_id).
+
+    Uses hash ring to filter events so only the agent responsible for the
+    network processes the event.
+
+    Fixes LP#2144458 by enabling immediate router interface binding instead
+    of waiting for periodic reconciliation. Related to LP#1995078
+    (networking-baremetal side of the solution).
+    """
+
+    table = 'HA_Chassis_Group'
+    events = (row_event.RowEvent.ROW_CREATE, row_event.RowEvent.ROW_UPDATE)
+
+    def __init__(self, agent):
+        """Initialize HAChassisGroupNetworkEvent.
+
+        :param agent: BaremetalNeutronAgent instance
+        """
+        self.agent = agent
+        self.hashring = agent.member_manager.hashring
+        self.agent_id = agent.agent_id
+        super().__init__()
+
+    def match_fn(self, event, row, old=None):
+        """Filter for HA chassis groups with network_id owned by this agent.
+
+        Returns True only if:
+        1. HA chassis group has neutron:network_id in external_ids
+        2. This agent owns the network (hash ring check)
+
+        Note: We process groups with network_id regardless of whether they
+        also have router_id. In unified HA chassis group scenarios, the same
+        group is used for both the network and router.
+
+        :param event: Event type (ROW_CREATE or ROW_UPDATE)
+        :param row: OVN HA_Chassis_Group row
+        :param old: Previous row state (for UPDATE events)
+        :returns: True if event should be processed, False otherwise
+        """
+        if not hasattr(row, 'external_ids') or not row.external_ids:
+            return False
+
+        external_ids = row.external_ids
+
+        network_id = external_ids.get(ovn_const.OVN_NETWORK_ID_EXT_ID_KEY)
+
+        if not network_id:
+            return False
+
+        try:
+            hashring_members = list(self.hashring[network_id.encode('utf-8')])
+            if self.agent_id not in hashring_members:
+                LOG.debug(
+                    "HA chassis group %s for network %s not owned by this "
+                    "agent (hash ring), ignoring. Agent ID: %s, "
+                    "Hash ring members for network: %s",
+                    row.uuid, network_id, self.agent_id, hashring_members)
+                return False
+
+            LOG.debug("HA chassis group %s matches: network-level group for "
+                      "network %s owned by this agent", row.uuid, network_id)
+            return True
+
+        except (ValueError, AttributeError, KeyError) as e:
+            LOG.debug("Failed to check hash ring for network %s: %s",
+                      network_id, e)
+            return False
+
+    def run(self, event, row, old):
+        """Trigger router interface binding for the network.
+
+        :param event: Event type (ROW_CREATE or ROW_UPDATE)
+        :param row: OVN HA_Chassis_Group row
+        :param old: Previous row state (for UPDATE events)
+        """
+        LOG.debug("HAChassisGroupNetworkEvent.run called: event=%s, "
+                  "row.uuid=%s, row.external_ids=%s",
+                  event, row.uuid, getattr(row, 'external_ids', None))
+
+        try:
+            network_id = row.external_ids.get(
+                ovn_const.OVN_NETWORK_ID_EXT_ID_KEY)
+            ha_chassis_group = row.uuid
+
+            LOG.info("Network HA chassis group %s created/updated for "
+                     "network %s, triggering router interface binding",
+                     event, network_id)
+
+            if hasattr(self.agent, 'router_ha_binding') and \
+                    self.agent.router_ha_binding:
+                binding = self.agent.router_ha_binding
+                binding.bind_router_interfaces_for_network(
+                    network_id, ha_chassis_group)
+            else:
+                LOG.warning("Router HA binding manager not available, "
+                            "skipping router interface binding for network %s",
+                            network_id)
+
+        except (AttributeError, KeyError):
+            LOG.exception("Failed to process HA chassis group event for "
+                          "row %s", row.uuid)

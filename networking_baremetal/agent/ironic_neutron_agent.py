@@ -46,6 +46,8 @@ from tooz import hashring
 from networking_baremetal.agent import agent_config
 from networking_baremetal.agent import l2vni_trunk_manager
 from networking_baremetal.agent import ovn_client
+from networking_baremetal.agent import ovn_events
+from networking_baremetal.agent import router_ha_binding
 from networking_baremetal import constants
 from networking_baremetal import ironic_client
 from networking_baremetal import neutron_client
@@ -165,26 +167,24 @@ class BaremetalNeutronAgent(service.ServiceBase):
         self.ironic_client = ironic_client.get_client()
         self.reported_nodes = {}
 
-        # L2VNI trunk reconciliation (optional feature)
-        self.trunk_manager = None
-        self.l2vni_reconcile = None
-        self._l2vni_reconciliation_lock = threading.Lock()
+        # Initialize OVN connections and Neutron client if any OVN-based
+        # features are enabled (L2VNI, router HA binding, or HA alignment)
+        ovn_nb_idl = None
+        ovn_sb_idl = None
+        neutron = None
 
-        # Initialize trunk manager if either periodic or event-driven
-        # reconciliation is enabled
         if (CONF.l2vni.enable_l2vni_trunk_reconciliation
-                or CONF.l2vni.enable_l2vni_trunk_reconciliation_events):
+                or CONF.l2vni.enable_l2vni_trunk_reconciliation_events
+                or CONF.baremetal_agent.enable_ha_chassis_group_alignment
+                or CONF.baremetal_agent.enable_router_ha_binding):
             if CONF.l2vni.enable_l2vni_trunk_reconciliation:
                 LOG.info('L2VNI trunk reconciliation enabled, initializing...')
             if CONF.l2vni.enable_l2vni_trunk_reconciliation_events:
                 LOG.info('Event-driven L2VNI trunk reconciliation enabled')
-
             neutron = self._get_neutron_client()
 
             # Try to connect to OVN, but allow startup if OVN is unavailable
             # The reconciliation loop will retry connecting
-            ovn_nb_idl = None
-            ovn_sb_idl = None
             try:
                 ovn_nb_idl = ovn_client.get_ovn_nb_idl()
                 ovn_sb_idl = ovn_client.get_ovn_sb_idl()
@@ -195,6 +195,18 @@ class BaremetalNeutronAgent(service.ServiceBase):
                     'This is expected if OVN is restarting or not yet '
                     'available. The agent will retry connecting during '
                     'reconciliation cycles.', exc_info=True)
+
+        # L2VNI trunk reconciliation (optional feature)
+        self.trunk_manager = None
+        self.l2vni_reconcile = None
+        self._l2vni_reconciliation_lock = threading.Lock()
+
+        if (CONF.l2vni.enable_l2vni_trunk_reconciliation
+                or CONF.l2vni.enable_l2vni_trunk_reconciliation_events):
+            if CONF.l2vni.enable_l2vni_trunk_reconciliation:
+                LOG.info('L2VNI trunk reconciliation enabled, initializing...')
+            if CONF.l2vni.enable_l2vni_trunk_reconciliation_events:
+                LOG.info('Event-driven L2VNI trunk reconciliation enabled')
 
             self.trunk_manager = (
                 l2vni_trunk_manager.L2VNITrunkManager(
@@ -242,7 +254,78 @@ class BaremetalNeutronAgent(service.ServiceBase):
         if CONF.baremetal_agent.enable_ha_chassis_group_alignment:
             LOG.info('HA chassis group alignment reconciliation enabled')
 
+        # Router HA binding manager (event-driven + periodic reconciliation)
+        self.router_ha_binding = None
+        self.router_ha_reconcile = None
+        if CONF.baremetal_agent.enable_router_ha_binding and ovn_nb_idl:
+            LOG.info('Router HA binding enabled, initializing manager')
+            if not neutron:
+                neutron = self._get_neutron_client()
+            self.router_ha_binding = router_ha_binding.RouterHABindingManager(
+                neutron_client=neutron,
+                ovn_nb_idl=ovn_nb_idl,
+                member_manager=self.member_manager,
+                agent_id=self.agent_id
+            )
+            LOG.info('Router HA binding manager initialized')
+
+        # Register OVN event handlers for enabled features
+        self._register_ovn_event_handlers()
+
         LOG.info('Agent networking-baremetal initialized.')
+
+    def _register_ovn_event_handlers(self):
+        """Register OVN event handlers for L2VNI and router HA binding.
+
+        Creates a dedicated event-only OVN connection and registers:
+        - LocalnetPortEvent for L2VNI trunk reconciliation (if enabled)
+        - HAChassisGroupNetworkEvent for router HA binding (if initialized)
+        """
+        # Check if any event-driven features are enabled
+        needs_l2vni_events = (
+            CONF.l2vni.enable_l2vni_trunk_reconciliation_events
+            and self.trunk_manager)
+        needs_router_ha_events = (
+            self.router_ha_binding is not None
+            and CONF.baremetal_agent.enable_router_ha_binding_events)
+
+        if not needs_l2vni_events and not needs_router_ha_events:
+            return
+
+        # Use dedicated event-only connection for event watching
+        # This connection has selective table registration to minimize
+        # event notification overhead
+        try:
+            ovn_nb_event_idl = ovn_client.get_ovn_nb_event_idl()
+
+            # Register localnet port event for L2VNI trunk reconciliation
+            if needs_l2vni_events:
+                self._localnet_event = ovn_events.LocalnetPortEvent(self)
+                LOG.info('Created LocalnetPortEvent with agent_id: %s',
+                         self._localnet_event.agent_id)
+                ovn_nb_event_idl.idl.notify_handler.watch_event(
+                    self._localnet_event)
+                LOG.info('Registered OVN event handler for L2VNI localnet '
+                         'port changes (CREATE/DELETE) using dedicated '
+                         'event-only connection')
+
+            # Register HA chassis group event for router HA binding
+            if needs_router_ha_events:
+                self._ha_chassis_group_event = (
+                    ovn_events.HAChassisGroupNetworkEvent(self))
+                LOG.info('Created HAChassisGroupNetworkEvent with '
+                         'agent_id: %s',
+                         self._ha_chassis_group_event.agent_id)
+                ovn_nb_event_idl.idl.notify_handler.watch_event(
+                    self._ha_chassis_group_event)
+                LOG.info('Registered OVN event handler for HA chassis '
+                         'group changes (CREATE/UPDATE) using dedicated '
+                         'event-only connection')
+        except Exception:
+            LOG.exception(
+                'Failed to create OVN event-only connection, '
+                'OVN event-driven reconciliation disabled. Using '
+                'periodic reconciliation only.')
 
     def start(self):
         LOG.info('Starting agent networking-baremetal.')
@@ -293,6 +376,23 @@ class BaremetalNeutronAgent(service.ServiceBase):
                      CONF.baremetal_agent
                      .ha_chassis_group_alignment_interval, jitter)
 
+        # Start router HA binding reconciliation if manager is initialized
+        # This catches:
+        # - Routers added to networks after HA chassis group exists
+        # - Missed events or race conditions
+        # - Any edge cases not covered by events
+        if self.router_ha_binding:
+            jitter = secrets.randbelow(
+                CONF.baremetal_agent.router_ha_binding_startup_jitter_max + 1)
+            self.router_ha_reconcile = loopingcall.FixedIntervalLoopingCall(
+                self._reconcile_router_ha_binding)
+            self.router_ha_reconcile.start(
+                interval=CONF.baremetal_agent.router_ha_binding_interval,
+                initial_delay=jitter)
+            LOG.info('Started router HA binding reconciliation loop '
+                     '(interval: %ds, first run in %ds)',
+                     CONF.baremetal_agent.router_ha_binding_interval, jitter)
+
     def stop(self, failure=False):
         LOG.info('Stopping agent networking-baremetal.')
         if self.heartbeat:
@@ -305,6 +405,9 @@ class BaremetalNeutronAgent(service.ServiceBase):
         if self.ha_alignment_reconcile:
             self.ha_alignment_reconcile.stop()
             LOG.info('Stopped HA chassis group alignment reconciliation loop')
+        if self.router_ha_reconcile:
+            self.router_ha_reconcile.stop()
+            LOG.info('Stopped router HA binding reconciliation loop')
         self.listener.stop()
         self.pool_listener.stop()
         self.listener.wait()
@@ -589,6 +692,26 @@ class BaremetalNeutronAgent(service.ServiceBase):
             LOG.exception("Failed to reconcile L2VNI trunks")
         finally:
             self._l2vni_reconciliation_lock.release()
+
+    def _reconcile_router_ha_binding(self):
+        """Periodic router HA binding reconciliation.
+
+        Ensures router interface ports on networks with HA chassis groups
+        are bound to those groups. This catches edge cases such as:
+        - Routers added to networks after HA chassis group exists
+        - Missed events (agent down/restarting)
+        - Race conditions or out-of-order event processing
+
+        Fixes LP#2144458 by ensuring eventual consistency even if
+        event-driven binding fails.
+        """
+        if not self.router_ha_binding:
+            return
+
+        try:
+            self.router_ha_binding.reconcile()
+        except Exception:
+            LOG.exception("Failed to reconcile router HA binding")
 
     def _reconcile_ha_chassis_group_alignment(self):
         """Periodic HA chassis group alignment reconciliation.

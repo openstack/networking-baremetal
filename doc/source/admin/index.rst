@@ -8,5 +8,6 @@ networking-baremetal in production environments.
 .. toctree::
    :maxdepth: 2
 
-   HA Chassis Group Alignment <ha-chassis-group-alignment>
-   L2VNI Trunk Reconciliation <l2vni-trunk-reconciliation>
+   ha-chassis-group-alignment
+   router-ha-binding
+   l2vni-trunk-reconciliation
