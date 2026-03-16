@@ -20,7 +20,6 @@ to work, network nodes must:
 1. Have trunk ports configured with the correct VLAN subports
 2. Keep those VLANs synchronized with active overlay networks
 3. Clean up VLANs when overlay networks are removed
-4. Handle changes in ha_chassis_group membership
 
 Manual management of these trunk ports becomes impractical at scale, especially
 when:
@@ -34,7 +33,7 @@ The trunk reconciliation feature automates this entire process using two
 complementary mechanisms that can be used independently or together:
 
 1. **OVN Event-Driven Reconciliation**: Watches OVN database for localnet port
-   changes and triggers immediate reconciliation (typically 100-500ms latency)
+   changes and triggers immediate reconciliation
 2. **Periodic Reconciliation**: Runs at regular intervals as a safety net to
    ensure eventual consistency
 
@@ -49,23 +48,16 @@ Reconciliation Mechanisms
 --------------------------
 
 The agent uses two reconciliation mechanisms that can be used independently
-or together. **For production deployments, using both is strongly recommended.**
+or together.
 
 **1. Event-Driven L2VNI Trunk Reconciliation (Default: Enabled)**
 
 When enabled (``enable_l2vni_trunk_reconciliation_events = True``), the agent
 watches OVN Northbound database for localnet port creation and deletion events.
 This provides immediate reconciliation when the L2VNI mechanism driver creates
-or deletes localnet ports during baremetal port binding operations.
-
-**Benefits:**
-
-- Eliminates stale IDL cache issues
-- Immediate reconciliation response to events
-- Targeted updates for specific VLANs avoid full trunk scans
-- No RPC infrastructure required
-- Events fire at the OVN layer where changes actually occur
-- Automatic cleanup when localnet ports are deleted
+or deletes localnet ports during baremetal port binding operations. This
+eliminates stale IDL cache issues and enables targeted updates for specific
+VLANs without scanning all trunk ports.
 
 **How It Works:**
 
@@ -84,17 +76,13 @@ or deletes localnet ports during baremetal port binding operations.
 
 This targeted approach is significantly faster than full reconciliation, especially
 on trunks with many VLANs. The event handler is registered at agent startup and
-watches continuously, eliminating race conditions where events might be missed.
+watches continuously for localnet port changes.
 
 **2. Periodic Reconciliation (Default: Enabled)**
 
 Periodic reconciliation runs at the configured interval
 (``l2vni_reconciliation_interval``) as a safety net to catch any missed
 events, handle agent restarts, and ensure eventual consistency.
-
-This mechanism can run independently of event-driven reconciliation, making it
-suitable for deployments where OVN event support is unavailable or for testing
-scenarios where you want predictable reconciliation timing.
 
 **Operating Modes**
 
@@ -108,7 +96,7 @@ The agent supports three operating modes:
       enable_l2vni_trunk_reconciliation = True
       enable_l2vni_trunk_reconciliation_events = True
 
-   - Event-driven reconciliation provides immediate response (100-500ms)
+   - Event-driven reconciliation provides immediate response
    - Periodic reconciliation ensures eventual consistency
    - Best reliability and performance
 
@@ -125,7 +113,7 @@ The agent supports three operating modes:
    - Useful for testing event-driven behavior in isolation
    - Lower overhead but no eventual consistency guarantee
 
-3. **Periodic Only (Fallback)**
+3. **Periodic Only**
 
    .. code-block:: ini
 
@@ -134,8 +122,7 @@ The agent supports three operating modes:
       enable_l2vni_trunk_reconciliation_events = False
 
    - Only periodic reconciliation runs
-   - Higher latency (up to reconciliation_interval)
-   - Useful if OVN event support is unavailable
+   - Reconciliation occurs at configured interval
 
 How It Works
 ------------
@@ -431,7 +418,7 @@ Configuration Options Reference
     reconciliation. When enabled, the agent watches OVN Northbound database
     for localnet port creation and deletion events and triggers immediate
     reconciliation. This eliminates the stale IDL cache issue and provides
-    sub-second reconciliation latency.
+    fast reconciliation response.
 
     This can be used independently or together with periodic reconciliation.
     For production deployments, using both event-driven and periodic
@@ -443,7 +430,7 @@ Configuration Options Reference
     periodic reconciliation only.
 
     Set this to ``False`` to disable event-driven reconciliation. Periodic
-    reconciliation (if enabled) will still work, but with higher latency.
+    reconciliation (if enabled) will still work.
 
 ``l2vni_reconciliation_interval``
     **Type**: Integer (seconds)
@@ -1402,6 +1389,7 @@ Use shard filtering to query only relevant nodes:
 See Also
 ========
 
+* :doc:`router-ha-binding` - Router HA Binding for VLAN Networks
 * :doc:`/configuration/ml2/l2vni-mechanism-driver` - L2VNI Mechanism Driver
 * :doc:`/configuration/ironic-neutron-agent/index` - Agent Configuration
 * :doc:`/contributor/index` - Contributing Guide

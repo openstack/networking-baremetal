@@ -266,8 +266,8 @@ class RouterHABindingManager:
         3. Race conditions or out-of-order event processing
         4. Manual changes to LRP ha_chassis_group settings
 
-        This method is called periodically (default: 60s) to ensure
-        eventual consistency even if event-driven binding fails.
+        This method is called periodically (default: 600s / 10 minutes)
+        to ensure eventual consistency even if event-driven binding fails.
         """
         LOG.info("Starting router HA binding reconciliation")
 
