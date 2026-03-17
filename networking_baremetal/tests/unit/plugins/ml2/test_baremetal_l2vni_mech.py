@@ -194,8 +194,13 @@ class TestL2vniPortBinding(tests_base.BaseTestCase):
 
         # Mock methods
         mock_context.allocate_dynamic_segment.return_value = vlan_segment
-        mock_context.is_partial_segment.return_value = False
         mock_context.continue_binding = mock.Mock()
+
+        # Mock plugin and type_manager
+        mock_context._plugin = mock.Mock()
+        mock_context._plugin.type_manager = mock.Mock()
+        mock_context._plugin.type_manager.is_partial_segment.return_value = (
+            False)
 
         return mock_context
 
@@ -303,7 +308,7 @@ class TestL2vniPortBinding(tests_base.BaseTestCase):
             api.PHYSICAL_NETWORK: 'physnet1'
         }
         context.network.network_segments.append(partial_segment)
-        context.is_partial_segment.return_value = True
+        context._plugin.type_manager.is_partial_segment.return_value = True
 
         self.assertRaises(n_exc.InvalidInput,
                           self.driver.bind_port, context)
