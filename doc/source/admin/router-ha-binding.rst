@@ -5,55 +5,27 @@ Router HA Binding for VLAN Networks
 Overview
 ========
 
-The Router HA Binding feature fixes connectivity issues between baremetal nodes
-and routers on VLAN networks by ensuring router interface ports are bound to
-the same HA chassis group as the network's external ports.
+The Router HA Binding feature ensures router interface ports are bound to
+the same HA chassis group as the network's external ports, enabling proper
+connectivity between baremetal nodes and routers on VLAN networks.
 
-This feature uses event-driven binding for immediate response when HA chassis
-groups are created, plus periodic reconciliation to handle edge cases, enabling
-proper ARP resolution and eliminating persistent connectivity failures.
+This feature uses event-driven binding when HA chassis groups are created,
+plus periodic reconciliation.
 
-Problem Statement
-=================
+Without this feature, baremetal nodes on VLAN networks cannot communicate with
+their router gateway because the router's internal interface port (Logical
+Router Port) is not bound to any chassis. When a baremetal node tries to ARP
+for the router IP, no chassis responds because the router interface port has
+no HA chassis group set.
 
-In OpenStack deployments using OVN with baremetal nodes on VLAN networks,
-baremetal nodes cannot communicate with their router gateway because the
-router's internal interface port (Logical Router Port) is not bound to any
-chassis. When a baremetal node tries to ARP for the router IP, no chassis
-responds because the router interface port has no HA chassis group set.
-
-This manifests as:
-
-1. Baremetal nodes on VLAN networks cannot reach their gateway
-2. ARP requests from baremetal nodes to router IP receive no reply
-3. Router cannot ARP for baremetal nodes on the physical network
-4. Persistent connectivity failure until HA chassis groups are manually aligned
-   or randomly align through other operations
-
-**Symptoms in tcpdump:**
-
-.. code-block:: console
-
-   # On network node, monitoring VLAN traffic
-   $ sudo tcpdump -i br-ex -envv 'vlan 105'
-
-   # You see ARP requests from both sides, but no replies:
-   Request who-has 10.0.5.1 (router) tell 10.0.5.26 (baremetal)
-   Request who-has 10.0.5.26 (baremetal) tell 10.0.5.1 (router)
-
-This issue is tracked in Launchpad:
-
-- **LP#2144458** (fixed by this feature): Persistent connectivity failures on VLAN networks
-- **LP#1995078** (related): Original OVN HA chassis group priority mismatch
-
-Solution
-========
+Implementation
+==============
 
 The ironic-neutron-agent now includes a **RouterHABindingManager** that
 automatically binds router interface ports to network HA chassis groups using
 a dual approach:
 
-**Event-Driven Binding (Primary)**
+**Event-Driven Binding**
 
 The agent monitors OVN's ``HA_Chassis_Group`` table for network-level groups.
 When a network HA chassis group is created or updated:
@@ -65,7 +37,7 @@ When a network HA chassis group is created or updated:
 
 This provides **immediate** connectivity with no delay.
 
-**Periodic Reconciliation (Backup)**
+**Periodic Reconciliation**
 
 A periodic reconciliation loop (default: 10 minutes) ensures eventual
 consistency by:
@@ -81,14 +53,6 @@ This catches edge cases such as:
 - Missed events (agent down during HA chassis group creation)
 - Manual changes to router port configuration
 - Race conditions or out-of-order event processing
-
-**Unified HA Chassis Groups**
-
-The implementation supports both:
-
-- **Network-only HA chassis groups**: Used for networks without routers
-- **Unified HA chassis groups**: Single group used for both network and router
-  (has both ``neutron:network_id`` and ``neutron:router_id`` in external_ids)
 
 Configuration
 =============
@@ -140,14 +104,7 @@ Reconciliation Interval
    # Minimum: 60
    router_ha_binding_interval = 600
 
-Controls how frequently the agent performs full reconciliation. The default
-of 10 minutes provides a balance between:
-
-- Catching edge cases (routers added after the fact, missed events)
-- Minimal impact on Neutron API and OVN database load
-
-**Note:** Event-driven binding provides immediate response when HA chassis
-groups are created. Periodic reconciliation is just a safety net for edge cases.
+Controls how frequently the agent performs full reconciliation.
 
 Startup Jitter
 --------------
@@ -161,9 +118,8 @@ Startup Jitter
    router_ha_binding_startup_jitter_max = 60
 
 Adds random delay (0 to max seconds) before first reconciliation run to prevent
-thundering herd when multiple agents restart simultaneously (e.g., post-upgrade).
-A value of 60 means each agent starts reconciliation within 0-60 seconds of
-startup.
+thundering herd when multiple agents restart simultaneously. A value of 60 means
+each agent starts reconciliation within 0-60 seconds of startup.
 
 Operational Considerations
 ==========================
@@ -205,7 +161,6 @@ The feature has minimal performance impact:
 
 - **Event-driven binding:** Immediate response with no periodic overhead
 - **Periodic reconciliation:** Runs every 10 minutes (configurable)
-- **Full reconciliation:** No complex windowing - simple and reliable
 - **Idempotent operations:** Most checks are "already correct" (cheap)
 - **Uses existing OVN connections:** Reuses connections from L2VNI trunk manager
 - **Distributed load:** Multiple agents split work via hash ring
@@ -262,18 +217,8 @@ If baremetal nodes cannot reach their gateway:
 
 3. **If router port shows []:** Wait for next reconciliation or check logs for errors
 
-4. **Test connectivity with tcpdump:**
-
-   .. code-block:: console
-
-      $ sudo tcpdump -i br-ex -envv 'vlan <vlan-id>'
-
-      # You should see ARP replies, not just requests:
-      Request who-has 10.0.5.1 tell 10.0.5.26
-      Reply 10.0.5.1 is-at fa:16:3e:82:d4:a4  # <- Router responds!
-
 Forcing Immediate Reconciliation
----------------------------------
+--------------------------------
 
 To trigger reconciliation without waiting:
 
@@ -283,40 +228,8 @@ To trigger reconciliation without waiting:
 
    # First reconciliation runs within 60 seconds (random jitter)
 
-Related Features
-================
+See Also
+========
 
-This feature complements the L2VNI trunk reconciliation feature:
-
-- **L2VNI reconciliation:** Manages VLAN trunk configurations for network nodes
-- **HA alignment:** Ensures consistent HA chassis group configuration
-
-Both features can be enabled independently and run on separate schedules.
-
-Related Features
-================
-
-This feature complements the L2VNI trunk reconciliation feature:
-
-- **L2VNI reconciliation:** Manages VLAN trunk configurations for network nodes
-- **Router HA binding:** Ensures router interface ports are bound to HA chassis groups
-
-Both features work together to enable baremetal connectivity on VLAN networks.
-
-Legacy HA Chassis Group Alignment
-==================================
-
-**Note:** The original ``enable_ha_chassis_group_alignment`` feature remains
-enabled by default for backward compatibility but is not functional for standard
-Ironic deployments. It will be deprecated in a future release.
-
-The new ``enable_router_ha_binding`` feature provides a working implementation
-of the same concept and should be used instead.
-
-References
-==========
-
-- Launchpad Bug #2144458: https://bugs.launchpad.net/networking-baremetal/+bug/2144458
-- Launchpad Bug #1995078: https://bugs.launchpad.net/neutron/+bug/1995078
-- OVN HA Chassis Groups: https://www.ovn.org/support/dist-docs/ovn-nb.5.html
-- ironic-neutron-agent: https://docs.openstack.org/networking-baremetal/
+* :doc:`l2vni-trunk-reconciliation` - L2VNI Trunk Reconciliation Configuration
+* :doc:`/configuration/ironic-neutron-agent/index` - Agent Configuration Reference
