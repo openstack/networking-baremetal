@@ -242,7 +242,14 @@ Each (chassis, physical_network) combination gets an anchor port named
 The local_link_information in the anchor port's binding profile is used by
 networking-generic-switch to configure the physical switch port when subports
 are added to the trunk. Note that local_link_information is a list containing
-one or more link connection dictionaries.
+one or more link connection dictionaries:
+
+- **Single link**: ``[{switch_id: ..., port_id: ..., switch_info: ...}]``
+- **Multiple links (LAG/bonding)**: ``[{...}, {...}, ...]``
+
+When multiple links are configured (from OVN LLDP, Ironic, or YAML config),
+they are all aggregated into this list, enabling ML2 mechanism drivers to
+configure link aggregation groups on the physical switch.
 
 **Trunk Ports**
 
@@ -284,20 +291,24 @@ The reconciliation process attempts to discover switch connection information
 for each trunk from multiple sources, in priority order:
 
 1. **OVN LLDP Data**: Extracted from OVN Southbound Port table external_ids
-   (``lldp_chassis_id``, ``lldp_port_id``, ``lldp_system_name``)
+   (``lldp_chassis_id``, ``lldp_port_id``, ``lldp_system_name``). If multiple
+   ports on the chassis have LLDP data for the same bridge, all links are
+   aggregated for LAG/bonding support.
 
-2. **Ironic Node Data**: Retrieved from Ironic port local_link_connection for
+2. **Ironic Node Data**: Retrieved from Ironic port local_link_information for
    nodes matching the chassis system-id. **Cached per system_id** with
-   configurable TTL to reduce API load.
+   configurable TTL to reduce API load. If multiple Ironic ports have the
+   same physical_network, all links are aggregated for LAG/bonding support.
 
    Queries use field filtering (only fetching uuid, properties,
-   physical_network, and local_link_connection) for optimal performance.
+   physical_network, and local_link_information) for optimal performance.
 
    Optional filtering by conductor_group and shard reduces query scope in
    large deployments.
 
 3. **YAML Configuration File**: Fallback configuration from
-   ``l2vni_network_nodes_config`` file
+   ``l2vni_network_nodes_config`` file. Supports both single-link and
+   multi-link (LAG/bonding) configurations.
 
 **Performance Note:**
 
@@ -458,7 +469,7 @@ Configuration Options Reference
 
     **Description**: Path to YAML configuration file containing network node
     trunk port configuration. This file serves as a fallback source for
-    local_link_connection information when LLDP data is not available from OVN
+    local_link_information when LLDP data is not available from OVN
     and Ironic.
 
     See `Network Node Configuration File`_ for file format details.
@@ -554,7 +565,7 @@ Configuration Options Reference
     **Default**: ``None`` (no filtering)
 
     **Description**: Ironic conductor group to filter nodes when querying
-    for local_link_connection data. This allows the agent to only query
+    for local_link_information data. This allows the agent to only query
     nodes managed by a specific conductor group, significantly reducing
     API load in large deployments with conductor group partitioning.
 
@@ -572,7 +583,7 @@ Configuration Options Reference
     **Default**: ``None`` (no filtering)
 
     **Description**: Ironic shard to filter nodes when querying for
-    local_link_connection data. This allows the agent to only query nodes
+    local_link_information data. This allows the agent to only query nodes
     in a specific shard, significantly reducing API load in large sharded
     deployments.
 
@@ -607,8 +618,8 @@ Configuration Options Reference
 Network Node Configuration File
 ================================
 
-The network node configuration file provides fallback local_link_connection
-information when LLDP and Ironic data are not available.
+The network node configuration file provides fallback local_link_information
+when LLDP and Ironic data are not available.
 
 File Format
 -----------
@@ -621,26 +632,29 @@ The file is in YAML format at the path specified by
    network_nodes:
      # Using system_id (explicit, no hostname lookup needed)
      - system_id: 0f563ca5-4a94-4d26-a21e-a4ce3dbcd372
-       trunks:
-         - physical_network: physnet1
-           local_link_connection:
-             switch_id: "00:11:22:33:44:55"
-             port_id: "Ethernet1/1"
-             switch_info: "tor-switch-1"
-         - physical_network: physnet2
-           local_link_connection:
-             switch_id: "aa:bb:cc:dd:ee:ff"
-             port_id: "GigabitEthernet1/0/1"
-             switch_info: "tor-switch-2"
+      trunks:
+        - physical_network: physnet1
+          local_link_information:
+            - switch_id: "00:11:22:33:44:55"
+              port_id: "Ethernet1/1"
+              switch_info: "tor-switch-1"
+        - physical_network: physnet2
+          local_link_information:
+            - switch_id: "aa:bb:cc:dd:ee:ff"
+              port_id: "GigabitEthernet1/0/1"
+              switch_info: "tor-switch-2"
 
-     # Using hostname
-     - hostname: network-node-1.example.com
-       trunks:
-         - physical_network: physnet1
-           local_link_connection:
-             switch_id: "00:11:22:33:44:55"
-             port_id: "Ethernet1/2"
-             switch_info: "tor-switch-1"
+    # Using hostname with LAG/bonding (multiple links)
+    - hostname: network-node-2.example.com
+      trunks:
+        - physical_network: physnet1
+          local_link_information:
+             - switch_id: "22:57:f8:dd:03:01"
+               port_id: "Ethernet1/3"
+               switch_info: "leaf01.netlab.example.com"
+             - switch_id: "22:57:f8:dd:03:01"
+               port_id: "Ethernet1/5"
+               switch_info: "leaf01.netlab.example.com"
 
 Field Descriptions
 ------------------
@@ -674,15 +688,17 @@ Field Descriptions
     The physical network name (must match ``network_vlan_ranges`` and
     ``ovn-bridge-mappings`` configuration)
 
-**local_link_connection** (required)
-    Dictionary containing switch connection information:
+**local_link_information** (required)
+    List of switch connection information dictionaries. Each entry contains:
 
     - **switch_id**: Switch MAC address or identifier
     - **port_id**: Switch port name/identifier
     - **switch_info**: Optional switch hostname or description
 
-This information is passed to switch management plugins in the binding profile
-to enable automatic switch port configuration.
+    Specify a single-item list for single links, or multiple items for
+    LAG/bonding configurations. All links are aggregated into the anchor
+    port's ``binding:profile['local_link_information']`` list and passed
+    to switch management plugins to enable automatic switch port configuration.
 
 Multi-Agent Deployment
 =======================
@@ -789,18 +805,18 @@ If LLDP data is not available in OVN, create
 
 .. code-block:: yaml
 
-   network_nodes:
-     - hostname: network-node-1.example.com
-       trunks:
-         - physical_network: physnet1
-           local_link_connection:
-             switch_id: "00:11:22:33:44:55"
-             port_id: "Ethernet1/1"
-             switch_info: "tor-switch-1"
+  network_nodes:
+    - hostname: network-node-1.example.com
+      trunks:
+        - physical_network: physnet1
+          local_link_information:
+            - switch_id: "00:11:22:33:44:55"
+              port_id: "Ethernet1/1"
+              switch_info: "tor-switch-1"
 
 .. note::
-   You can use either ``hostname`` or ``system_id`` (OVN chassis UUID).
-   To find both values, run: ``ovn-sbctl --columns=name,hostname list Chassis``
+   See `Network Node Configuration File`_ for complete format details,
+   including multi-link LAG/bonding configurations.
 
 Step 4: Restart ironic-neutron-agent
 -------------------------------------

@@ -42,7 +42,7 @@ L2VNI_OPTS = [
              'configuration. Used as fallback when trunk configuration is '
              'not available from OVN LLDP data or Ironic. The file should '
              'define system_id or hostname, physical_network, and '
-             'local_link_connection information for each network node. '
+             'local_link_information for each network node. '
              'Network nodes can be identified by either system_id (OVN '
              'chassis UUID) or hostname (OVN chassis hostname) for easier '
              'configuration.'),
@@ -133,16 +133,17 @@ L2VNI_OPTS = [
         'ironic_conductor_group',
         default=None,
         help='Ironic conductor group to filter nodes when querying for '
-             'local_link_connection data. This allows the agent to only query '
-             'nodes managed by a specific conductor group, reducing API load '
-             'in large deployments. If not specified, all nodes are queried.'),
+             'local_link_information data. This allows the agent to only '
+             'query nodes managed by a specific conductor group, reducing API '
+             'load in large deployments. If not specified, all nodes are '
+             'queried.'),
     cfg.StrOpt(
         'ironic_shard',
         default=None,
         help='Ironic shard to filter nodes when querying for '
-             'local_link_connection data. This allows the agent to only query '
-             'nodes in a specific shard, reducing API load in large sharded '
-             'deployments. If not specified, all nodes are queried.'),
+             'local_link_information data. This allows the agent to only '
+             'query nodes in a specific shard, reducing API load in large '
+             'sharded deployments. If not specified, all nodes are queried.'),
 ]
 
 # HA chassis group alignment options

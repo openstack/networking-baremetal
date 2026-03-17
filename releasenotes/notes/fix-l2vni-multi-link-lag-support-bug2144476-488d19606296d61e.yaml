@@ -1,0 +1,18 @@
+---
+fixes:
+  - |
+    Fixed L2VNI trunk manager to support multiple physical links per
+    (chassis, physical_network) combination for LAG/bonding. Previously only
+    the first link was used, preventing proper link aggregation. The fix
+    aggregates all matching links from OVN LLDP, Ironic ports, and YAML config.
+    See `bug 2144476 <https://bugs.launchpad.net/networking-baremetal/+bug/2144476>`_.
+  - |
+    Fixed OVN LLDP data collection to properly filter ports by bridge, preventing
+    switch connection information from the wrong physical network being used in
+    multi-physnet deployments. See
+    `bug 2144482 <https://bugs.launchpad.net/networking-baremetal/+bug/2144482>`_.
+deprecations:
+  - |
+    The ``local_link_connection`` field in network node YAML configuration is
+    deprecated in favor of ``local_link_information`` to match Neutron API naming.
+    The old field name is still supported with a deprecation warning.
