@@ -188,6 +188,48 @@ BAREMETAL_AGENT_OPTS = [
              'this window will be checked for HA chassis group alignment. '
              'Setting to 0 effectively disables windowing even if the limit '
              'flag is enabled.'),
+    cfg.BoolOpt(
+        'enable_router_ha_binding',
+        default=True,
+        help='Enable router HA binding for router interface ports on '
+             'networks with baremetal nodes. When enabled, the agent '
+             'automatically binds router interface ports to the same HA '
+             'chassis group as the network\'s external ports, enabling '
+             'proper ARP resolution and connectivity between baremetal nodes '
+             'and their router gateway on VLAN networks. This fixes '
+             'Launchpad bug #2144458 where baremetal nodes experience '
+             'persistent connectivity failures to their router gateway. '
+             'Uses both event-driven binding (for immediate response) and '
+             'periodic reconciliation (for edge cases).'),
+    cfg.BoolOpt(
+        'enable_router_ha_binding_events',
+        default=True,
+        help='Enable event-driven router HA binding. When enabled, the agent '
+             'responds immediately to HA chassis group creation events by '
+             'binding router interface ports on the affected network. This '
+             'provides instant connectivity when networks are created. '
+             'Requires enable_router_ha_binding to be enabled. If disabled, '
+             'only periodic reconciliation will be used, which may result in '
+             'connectivity delays until the next reconciliation cycle.'),
+    cfg.IntOpt(
+        'router_ha_binding_interval',
+        default=600,
+        min=60,
+        help='Interval in seconds for periodic router HA binding '
+             'reconciliation. This ensures router interface ports are '
+             'bound to network HA chassis groups even if events are '
+             'missed or routers are added after the fact. Default is '
+             '600 seconds (10 minutes). Minimum is 60 seconds.'),
+    cfg.IntOpt(
+        'router_ha_binding_startup_jitter_max',
+        default=60,
+        min=0,
+        help='Maximum random delay in seconds to add to initial '
+             'reconciliation start time. This prevents thundering herd '
+             'issues when multiple agents restart simultaneously (e.g., '
+             'post-upgrade). A value of 60 means each agent will start '
+             'reconciliation within 0-60 seconds of startup. Matches '
+             'l2vni_startup_jitter_max for consistency.'),
 ]
 
 

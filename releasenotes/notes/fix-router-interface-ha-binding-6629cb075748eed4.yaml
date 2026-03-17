@@ -1,0 +1,17 @@
+---
+features:
+  - |
+    Added event-driven router interface HA chassis group binding to fix
+    connectivity issues between baremetal nodes and routers on VLAN networks.
+    A new RouterHABindingManager monitors OVN HA_Chassis_Group creation events
+    and automatically binds router interface ports to the network's HA chassis
+    group, enabling proper ARP resolution on physical networks. The manager
+    includes both event-driven binding (for immediate response) and periodic
+    reconciliation (for routers added after the fact or missed events).
+fixes:
+  - |
+    Fixed persistent connectivity failures between baremetal nodes and routers
+    on VLAN networks. Router interface ports are now automatically bound to the
+    network's HA chassis group, enabling proper ARP resolution. See
+    `bug 2144458 <https://bugs.launchpad.net/networking-baremetal/+bug/2144458>`_
+    and `bug 1995078 <https://bugs.launchpad.net/neutron/+bug/1995078>`_.

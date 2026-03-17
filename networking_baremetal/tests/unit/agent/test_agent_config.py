@@ -119,6 +119,18 @@ class TestAgentConfig(tests_base.BaseTestCase):
         self.assertEqual(600, CONF.baremetal_agent
                          .ha_chassis_group_alignment_interval)
 
+    def test_enable_router_ha_binding_default(self):
+        """Test enable_router_ha_binding default value."""
+        self.assertTrue(CONF.baremetal_agent.enable_router_ha_binding)
+
+    def test_enable_router_ha_binding_events_default(self):
+        """Test enable_router_ha_binding_events default value."""
+        self.assertTrue(CONF.baremetal_agent.enable_router_ha_binding_events)
+
+    def test_router_ha_binding_interval_default(self):
+        """Test router_ha_binding_interval default value."""
+        self.assertEqual(600, CONF.baremetal_agent.router_ha_binding_interval)
+
     def test_list_opts(self):
         """Test list_opts returns correct format."""
         opts = agent_config.list_opts()
