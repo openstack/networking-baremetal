@@ -1,0 +1,10 @@
+---
+fixes:
+  - |
+    Fixed L2VNI trunk subports to include VNI (VXLAN/Geneve segment ID)
+    information in their ``binding:profile['vni']`` field, enabling ML2
+    mechanism drivers to configure complete VLAN-to-VNI mappings on physical
+    network switches. Previously, subports only contained ``physical_network``
+    and VLAN ID, preventing proper EVPN/VXLAN configuration. For more
+    information, see
+    `bug 2144396 <https://bugs.launchpad.net/networking-generic-switch/+bug/2144396>`_.

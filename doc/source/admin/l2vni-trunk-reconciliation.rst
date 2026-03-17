@@ -77,8 +77,9 @@ or deletes localnet ports during baremetal port binding operations.
 6. Agent performs **targeted reconciliation** for that specific VLAN:
 
    - Ensures infrastructure networks exist
+   - Queries overlay segment information (VNI) for the network
    - Finds/creates trunks for chassis with the physnet
-   - Adds or removes only the specific VLAN subport (idempotent)
+   - Adds or removes only the specific VLAN subport with VNI in binding profile (idempotent)
    - Skips scanning all other VLANs on the trunk
 
 This targeted approach is significantly faster than full reconciliation, especially
@@ -157,11 +158,12 @@ The ironic-neutron-agent runs a reconciliation process that:
    - Queries logical router ports for gateway chassis assignments
    - Identifies overlay networks attached to those routers
    - Finds the dynamic VLAN segment allocated for each overlay network
+   - Retrieves overlay segment information (VNI) for L2VNI mapping
 
 4. **Reconciles Subports**: Ensures each trunk has exactly the right set of
    VLAN subports:
 
-   - Adds missing subports for new overlay networks
+   - Adds missing subports for new overlay networks with VNI in binding profile
    - Removes subports for deleted overlay networks
    - Updates subport binding profiles with switch connection information
 
@@ -256,8 +258,16 @@ Each subport represents one overlay network's VLAN segment:
 - Has device_owner ``baremetal:l2vni_subport``
 - Has binding:host_id set to the chassis hostname for proper ML2 binding
 - Segmentation type is always ``vlan``
+- Contains ``binding:profile`` with:
 
-Note: networking-generic-switch uses the parent port's (anchor port's)
+  - ``physical_network``: The physical network name
+  - ``vni``: The overlay segment ID (VXLAN/Geneve VNI) for L2VNI mapping
+
+The VNI information in the binding profile enables ML2 mechanism drivers to
+configure complete VLAN-to-VNI mappings on physical switches. This is essential
+for proper EVPN/VXLAN bridging between overlay networks and physical VLANs.
+
+Note: ML2 mechanism drivers use the parent port's (anchor port's)
 local_link_information when configuring the physical switch, so subports do
 not need local_link_information in their binding profile.
 
