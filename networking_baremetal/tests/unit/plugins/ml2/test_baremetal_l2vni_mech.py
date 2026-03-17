@@ -151,12 +151,15 @@ class TestL2vniPortBinding(tests_base.BaseTestCase):
     def _create_port_context(self, vnic_type=portbindings.VNIC_BAREMETAL,
                              network_type=n_const.TYPE_VXLAN,
                              physnet='physnet1',
-                             vlan_id=100):
+                             vlan_id=100,
+                             network_name=None):
         """Create a mock port context"""
         mock_context = mock.Mock()
 
         # Setup current port
         network = ml2_utils.get_test_network()
+        if network_name:
+            network['name'] = network_name
         port = ml2_utils.get_test_port(
             network['id'],
             vnic_type=vnic_type,
@@ -208,6 +211,19 @@ class TestL2vniPortBinding(tests_base.BaseTestCase):
         context = self._create_port_context(
             network_type=n_const.TYPE_FLAT)
         self.driver.bind_port(context)
+        context.continue_binding.assert_not_called()
+
+    def test_bind_port_skips_anchor_network(self):
+        """Test bind_port skips ports on L2VNI subport anchor network"""
+        cfg.CONF.set_override('l2vni_subport_anchor_network',
+                              'l2vni-subport-anchor',
+                              group='l2vni')
+        context = self._create_port_context(
+            network_type=n_const.TYPE_VXLAN,
+            network_name='l2vni-subport-anchor')
+        self.driver.bind_port(context)
+        # Should not attempt to allocate segment or continue binding
+        context.allocate_dynamic_segment.assert_not_called()
         context.continue_binding.assert_not_called()
 
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
