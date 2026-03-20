@@ -596,10 +596,8 @@ class L2VNITrunkManager:
         }
         if local_link_list:
             binding_profile['local_link_information'] = local_link_list
-            if len(local_link_list) > 1:
-                LOG.info("Creating anchor port with %d links (LAG/bonding) "
-                         "for chassis %s physnet %s",
-                         len(local_link_list), system_id, physnet)
+            LOG.info("Creating anchor port with %d link(s) for chassis %s "
+                     "physnet %s", len(local_link_list), system_id, physnet)
 
         # Create anchor port
         try:
@@ -1260,10 +1258,8 @@ class L2VNITrunkManager:
                         })
 
             if local_links:
-                if len(local_links) > 1:
-                    LOG.info("Found %d links for chassis %s physnet %s "
-                             "(LAG/bonding configuration)",
-                             len(local_links), system_id, physnet)
+                LOG.info("Found %d link(s) from LLDP for chassis %s "
+                         "physnet %s", len(local_links), system_id, physnet)
                 return local_links
 
             return None
@@ -1359,14 +1355,8 @@ class L2VNITrunkManager:
                 local_links.append(port['local_link'])
 
         if local_links:
-            if len(local_links) > 1:
-                LOG.debug("Found %d links from %s for chassis %s physnet %s "
-                          "(LAG/bonding)",
-                          len(local_links), source_label, system_id, physnet)
-            else:
-                LOG.debug("Found local_link_information from %s for "
-                          "chassis %s physnet %s",
-                          source_label, system_id, physnet)
+            LOG.debug("Found %d link(s) from %s for chassis %s physnet %s",
+                      len(local_links), source_label, system_id, physnet)
             return local_links
 
         return None
@@ -1464,10 +1454,8 @@ class L2VNITrunkManager:
 
                 # Support both single dict and list of dicts
                 if isinstance(local_link, list):
-                    # Already a list - return as-is
-                    if len(local_link) > 1:
-                        LOG.debug("Found %d links in config for physnet %s "
-                                  "(LAG/bonding)", len(local_link), physnet)
+                    LOG.debug("Found %d link(s) in config for physnet %s",
+                              len(local_link), physnet)
                     return local_link
                 elif isinstance(local_link, dict):
                     # Single dict - wrap in list for consistency
