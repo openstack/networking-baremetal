@@ -933,8 +933,10 @@ class L2VNITrunkManager:
 
         try:
             # Check ha_chassis_group (preferred)
-            if hasattr(lrp, 'ha_chassis_group') and lrp.ha_chassis_group:
-                for ha_chassis in lrp.ha_chassis_group.ha_chassis:
+            # ha_chassis_group is a list with 0 or 1 element
+            if lrp.ha_chassis_group:
+                ha_group = lrp.ha_chassis_group[0]
+                for ha_chassis in ha_group.ha_chassis:
                     chassis = self._get_chassis_by_name(
                         ha_chassis.chassis_name)
                     if chassis:
