@@ -64,11 +64,16 @@ class FakeChassis:
 class FakeLogicalRouterPort:
     """Fake OVN Logical Router Port object."""
 
-    def __init__(self, name, gateway_chassis_list, networks=None):
+    def __init__(self, name, gateway_chassis_list, networks=None,
+                 ha_chassis_group=None):
         self.name = name
         self.gateway_chassis = gateway_chassis_list
         self.networks = networks or []
-        self.ha_chassis_group = []
+        # ha_chassis_group is a list with 0 or 1 HA_Chassis_Group object
+        if ha_chassis_group:
+            self.ha_chassis_group = [ha_chassis_group]
+        else:
+            self.ha_chassis_group = []
 
 
 class FakeLogicalSwitchPort:
