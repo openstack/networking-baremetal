@@ -255,11 +255,13 @@ Each subport represents one overlay network's VLAN segment:
 - Contains ``binding:profile`` with:
 
   - ``physical_network``: The physical network name
+  - ``segment_id``: The Neutron VLAN segment UUID
   - ``vni``: The overlay segment ID (VXLAN/Geneve VNI) for L2VNI mapping
 
-The VNI information in the binding profile enables ML2 mechanism drivers to
-configure complete VLAN-to-VNI mappings on physical switches. This is essential
-for proper EVPN/VXLAN bridging between overlay networks and physical VLANs.
+The segment_id enables ML2 mechanism drivers to use segment-based cleanup logic
+instead of parsing switch port configurations, allowing static trunk port
+configurations. The VNI enables complete VLAN-to-VNI mappings on physical
+switches for EVPN/VXLAN bridging.
 
 Note: ML2 mechanism drivers use the parent port's (anchor port's)
 local_link_information when configuring the physical switch, so subports do
