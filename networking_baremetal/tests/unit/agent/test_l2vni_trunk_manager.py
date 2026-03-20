@@ -123,11 +123,12 @@ class FakeSegment:
     """Fake Neutron Segment object."""
 
     def __init__(self, network_id, network_type, segmentation_id,
-                 physical_network):
+                 physical_network, segment_id=None):
         self.network_id = network_id
         self.network_type = network_type
         self.segmentation_id = segmentation_id
         self.physical_network = physical_network
+        self.id = segment_id or f"segment-{network_id}-{segmentation_id}"
 
 
 class FakeIronicPort:
@@ -506,8 +507,11 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         # Should find VLAN 100 on physnet1 for system-id-1
         self.assertIn(('system-id-1', 'physnet1'), result)
         self.assertIn(100, result[('system-id-1', 'physnet1')])
+        vlan_info = result[('system-id-1', 'physnet1')][100]
         # VNI should be None since no overlay segment exists
-        self.assertIsNone(result[('system-id-1', 'physnet1')][100])
+        self.assertIsNone(vlan_info['vni'])
+        # segment_id should be present
+        self.assertEqual('segment-network-id-1-100', vlan_info['segment_id'])
 
     @mock.patch('neutron.common.ovn.utils.ovn_name', autospec=True)
     def test_calculate_required_vlans_captures_vni(self, mock_ovn_name):
@@ -570,7 +574,9 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         # Should find VLAN 100 on physnet1 for system-id-1 with VNI 5000
         self.assertIn(('system-id-1', 'physnet1'), result)
         self.assertIn(100, result[('system-id-1', 'physnet1')])
-        self.assertEqual(5000, result[('system-id-1', 'physnet1')][100])
+        vlan_info = result[('system-id-1', 'physnet1')][100]
+        self.assertEqual(5000, vlan_info['vni'])
+        self.assertEqual('segment-network-id-1-100', vlan_info['segment_id'])
 
     def test_reconcile_subports_adds_missing_subports(self):
         """Test subport reconciliation adds missing subports."""
@@ -583,7 +589,12 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         self.mock_neutron.network.get_trunk.return_value = trunk
 
         # Setup required VLANs with VNI mapping
-        required_vlans = {('system-1', 'physnet1'): {100: 5000, 200: 5001}}
+        required_vlans = {
+            ('system-1', 'physnet1'): {
+                100: {'vni': 5000, 'segment_id': 'segment-id-100'},
+                200: {'vni': 5001, 'segment_id': 'segment-id-200'}
+            }
+        }
 
         # Mock anchor network
         cfg.CONF.set_override('l2vni_subport_anchor_network',
@@ -610,7 +621,7 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         # Should create 2 subports
         self.assertEqual(2, self.mock_neutron.network.create_port.call_count)
 
-        # Verify binding_profile contains VNI for both subports
+        # Verify binding_profile contains segment_id and VNI for both subports
         calls = self.mock_neutron.network.create_port.call_args_list
         for call in calls:
             kwargs = call[1]
@@ -618,6 +629,10 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
             binding_profile = kwargs['binding_profile']
             self.assertIn('physical_network', binding_profile)
             self.assertEqual('physnet1', binding_profile['physical_network'])
+            self.assertIn('segment_id', binding_profile)
+            # segment_id should be either segment-id-100 or segment-id-200
+            self.assertIn(binding_profile['segment_id'],
+                          ['segment-id-100', 'segment-id-200'])
             self.assertIn('vni', binding_profile)
             # VNI should be either 5000 or 5001
             self.assertIn(binding_profile['vni'], [5000, 5001])
@@ -643,7 +658,11 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         self.mock_neutron.network.get_trunk.return_value = trunk
 
         # Only VLAN 100 is required, VLAN 200 should be removed
-        required_vlans = {('system-1', 'physnet1'): {100: 5000}}
+        required_vlans = {
+            ('system-1', 'physnet1'): {
+                100: {'vni': 5000, 'segment_id': 'segment-id-100'}
+            }
+        }
 
         cfg.CONF.set_override('l2vni_subport_anchor_network',
                               'anchor-network',
@@ -670,7 +689,12 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         self.mock_neutron.network.get_trunk.return_value = trunk
 
         # Setup required VLANs without VNI (None values)
-        required_vlans = {('system-1', 'physnet1'): {100: None, 200: None}}
+        required_vlans = {
+            ('system-1', 'physnet1'): {
+                100: {'vni': None, 'segment_id': 'segment-id-100'},
+                200: {'vni': None, 'segment_id': 'segment-id-200'}
+            }
+        }
 
         # Mock anchor network
         cfg.CONF.set_override('l2vni_subport_anchor_network',
@@ -697,7 +721,8 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
         # Should create 2 subports
         self.assertEqual(2, self.mock_neutron.network.create_port.call_count)
 
-        # Verify binding_profile does NOT contain VNI for pure VLAN networks
+        # Verify binding_profile contains segment_id but NOT VNI for pure
+        # VLAN networks
         calls = self.mock_neutron.network.create_port.call_args_list
         for call in calls:
             kwargs = call[1]
@@ -705,6 +730,9 @@ class TestL2VNITrunkManager(tests_base.BaseTestCase):
             binding_profile = kwargs['binding_profile']
             self.assertIn('physical_network', binding_profile)
             self.assertEqual('physnet1', binding_profile['physical_network'])
+            self.assertIn('segment_id', binding_profile)
+            self.assertIn(binding_profile['segment_id'],
+                          ['segment-id-100', 'segment-id-200'])
             # VNI should NOT be in binding_profile when it's None
             self.assertNotIn('vni', binding_profile)
 
@@ -1710,6 +1738,7 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         physnet = 'physnet1'
         vlan_id = 100
         anchor_network_id = 'anchor-net-id'
+        segment_id = 'segment-id-1'
 
         # Setup chassis with hostname
         chassis = FakeChassis('chassis-1', system_id, hostname='devstack')
@@ -1722,7 +1751,7 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         self.mock_neutron.network.create_port.return_value = created_port
 
         self.manager._add_subport(trunk_id, system_id, physnet, vlan_id,
-                                  anchor_network_id)
+                                  anchor_network_id, segment_id)
 
         # Should create port and set binding:host_id
         self.mock_neutron.network.create_port.assert_called_once()
@@ -1741,6 +1770,7 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         physnet = 'physnet1'
         vlan_id = 100
         anchor_network_id = 'anchor-net-id'
+        segment_id = 'segment-id-1'
 
         # Mock empty chassis table (hostname lookup fails)
         self.mock_ovn_sb.tables['Chassis'].rows.values.return_value = []
@@ -1751,12 +1781,86 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         self.mock_neutron.network.create_port.return_value = created_port
 
         self.manager._add_subport(trunk_id, system_id, physnet, vlan_id,
-                                  anchor_network_id)
+                                  anchor_network_id, segment_id)
 
         # Should create port but NOT call update_port (no hostname)
         self.mock_neutron.network.create_port.assert_called_once()
         # update_port should not be called since we have no hostname
         self.mock_neutron.network.update_port.assert_not_called()
+
+    def test_get_vni_and_segment_for_network_with_both(self):
+        """Test _get_vni_and_segment_for_network returns both values."""
+        network_id = 'network-id-1'
+        physnet = 'physnet1'
+        vlan_id = 100
+
+        # Mock segments: VLAN + VXLAN overlay
+        vlan_segment = FakeSegment(network_id, n_const.TYPE_VLAN, vlan_id,
+                                   physnet, segment_id='seg-vlan-100')
+        vxlan_segment = FakeSegment(network_id, n_const.TYPE_VXLAN, 5000,
+                                    None, segment_id='seg-vxlan-5000')
+        self.mock_neutron.network.segments.return_value = [vlan_segment,
+                                                           vxlan_segment]
+
+        vni, segment_id = self.manager._get_vni_and_segment_for_network(
+            network_id, physnet, vlan_id)
+
+        self.assertEqual(5000, vni)
+        self.assertEqual('seg-vlan-100', segment_id)
+
+    def test_get_vni_and_segment_for_network_vlan_only(self):
+        """Test _get_vni_and_segment_for_network with VLAN only."""
+        network_id = 'network-id-1'
+        physnet = 'physnet1'
+        vlan_id = 100
+
+        # Mock only VLAN segment (no overlay)
+        vlan_segment = FakeSegment(network_id, n_const.TYPE_VLAN, vlan_id,
+                                   physnet, segment_id='seg-vlan-100')
+        self.mock_neutron.network.segments.return_value = [vlan_segment]
+
+        vni, segment_id = self.manager._get_vni_and_segment_for_network(
+            network_id, physnet, vlan_id)
+
+        self.assertIsNone(vni)
+        self.assertEqual('seg-vlan-100', segment_id)
+
+    def test_get_vni_and_segment_for_network_no_match(self):
+        """Test _get_vni_and_segment_for_network with no matching segment."""
+        network_id = 'network-id-1'
+        physnet = 'physnet1'
+        vlan_id = 100
+
+        # Mock segment with different VLAN ID
+        vlan_segment = FakeSegment(network_id, n_const.TYPE_VLAN, 200,
+                                   physnet, segment_id='seg-vlan-200')
+        self.mock_neutron.network.segments.return_value = [vlan_segment]
+
+        vni, segment_id = self.manager._get_vni_and_segment_for_network(
+            network_id, physnet, vlan_id)
+
+        self.assertIsNone(vni)
+        self.assertIsNone(segment_id)
+
+    def test_reconcile_trunk_subports_skips_when_segment_id_missing(self):
+        """Test subport creation is skipped when segment_id is missing."""
+        trunk_id = 'trunk-id'
+        system_id = 'system-1'
+        physnet = 'physnet1'
+        anchor_network_id = 'anchor-net-id'
+
+        # Setup trunk with no subports
+        trunk = FakeTrunk(trunk_id, 'anchor-port-id', sub_ports=[])
+        self.mock_neutron.network.get_trunk.return_value = trunk
+
+        # VLAN info missing segment_id (simulates bug or old data)
+        vlan_vni_map = {100: {'vni': 5000, 'segment_id': None}}
+
+        self.manager._reconcile_trunk_subports(
+            trunk_id, system_id, physnet, vlan_vni_map, anchor_network_id)
+
+        # Should NOT create port when segment_id is missing
+        self.mock_neutron.network.create_port.assert_not_called()
 
 
 class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
@@ -1803,16 +1907,16 @@ class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
                        '_ensure_single_subport', autospec=True)
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
-                       '_get_vni_for_network', autospec=True)
+                       '_get_vni_and_segment_for_network', autospec=True)
     def test_reconcile_single_vlan_add_action(
-            self, mock_get_vni, mock_ensure_subport, mock_find_trunk,
+            self, mock_get_vni_segment, mock_ensure_subport, mock_find_trunk,
             mock_get_chassis, mock_get_anchor, mock_ensure_infra):
         """Test targeted reconciliation adds subport for single VLAN."""
         manager = self._create_manager()
 
         mock_get_anchor.return_value = 'anchor-net-id'
         mock_get_chassis.return_value = {'chassis-1', 'chassis-2'}
-        mock_get_vni.return_value = 5000
+        mock_get_vni_segment.return_value = (5000, 'segment-id-1')
 
         trunk_map = {}
 
@@ -1828,7 +1932,8 @@ class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
         mock_ensure_infra.assert_called_once_with(manager)
         mock_get_anchor.assert_called_once_with(manager)
         mock_get_chassis.assert_called_once_with(manager, 'physnet1')
-        mock_get_vni.assert_called_once_with(manager, 'net-1')
+        mock_get_vni_segment.assert_called_once_with(
+            manager, 'net-1', 'physnet1', 100)
         self.assertEqual(2, mock_find_trunk.call_count)
         self.assertEqual(2, mock_ensure_subport.call_count)
 
@@ -1836,7 +1941,7 @@ class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
             trunk_id = trunk_map[system_id]
             mock_ensure_subport.assert_any_call(
                 manager, trunk_id, system_id, 'physnet1', 100,
-                'anchor-net-id', vni=5000)
+                'anchor-net-id', 'segment-id-1', vni=5000)
 
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
                        '_ensure_infrastructure_networks', autospec=True)
@@ -1891,21 +1996,22 @@ class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
                        '_get_all_chassis_with_physnet', autospec=True)
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
-                       '_get_vni_for_network', autospec=True)
+                       '_get_vni_and_segment_for_network', autospec=True)
     def test_reconcile_single_vlan_no_chassis_with_physnet(
-            self, mock_get_vni, mock_get_chassis, mock_get_anchor,
+            self, mock_get_vni_segment, mock_get_chassis, mock_get_anchor,
             mock_ensure_infra):
         """Test reconciliation exits early if no chassis with physnet."""
         manager = self._create_manager()
         mock_get_anchor.return_value = 'anchor-net-id'
         mock_get_chassis.return_value = set()
-        mock_get_vni.return_value = 5000
+        mock_get_vni_segment.return_value = (5000, 'segment-id-1')
 
         manager.reconcile_single_vlan('net-1', 'physnet1', 100, action='add')
 
         mock_ensure_infra.assert_called_once_with(manager)
         mock_get_chassis.assert_called_once_with(manager, 'physnet1')
-        mock_get_vni.assert_called_once_with(manager, 'net-1')
+        mock_get_vni_segment.assert_called_once_with(
+            manager, 'net-1', 'physnet1', 100)
 
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
                        '_ensure_infrastructure_networks', autospec=True)
@@ -1918,16 +2024,16 @@ class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
                        '_ensure_single_subport', autospec=True)
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
-                       '_get_vni_for_network', autospec=True)
+                       '_get_vni_and_segment_for_network', autospec=True)
     def test_reconcile_single_vlan_trunk_creation_fails(
-            self, mock_get_vni, mock_ensure_subport, mock_find_trunk,
+            self, mock_get_vni_segment, mock_ensure_subport, mock_find_trunk,
             mock_get_chassis, mock_get_anchor, mock_ensure_infra):
         """Test reconciliation continues if trunk creation fails."""
         manager = self._create_manager()
 
         mock_get_anchor.return_value = 'anchor-net-id'
         mock_get_chassis.return_value = {'chassis-1', 'chassis-2'}
-        mock_get_vni.return_value = 5000
+        mock_get_vni_segment.return_value = (5000, 'segment-id-1')
 
         def find_trunk_side_effect(self, system_id, physnet):
             if system_id == 'chassis-1':
@@ -1941,7 +2047,7 @@ class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
         self.assertEqual(2, mock_find_trunk.call_count)
         mock_ensure_subport.assert_called_once_with(
             manager, 'trunk-chassis-2', 'chassis-2', 'physnet1', 100,
-            'anchor-net-id', vni=5000)
+            'anchor-net-id', 'segment-id-1', vni=5000)
 
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
                        '_ensure_infrastructure_networks', autospec=True)
@@ -1958,6 +2064,29 @@ class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
         mock_ensure_infra.assert_called_once_with(manager)
 
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_infrastructure_networks', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_subport_anchor_network_id', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_vni_and_segment_for_network', autospec=True)
+    def test_reconcile_single_vlan_skips_when_segment_id_missing(
+            self, mock_get_vni_segment, mock_get_anchor, mock_ensure_infra):
+        """Test reconciliation skips when segment_id cannot be found."""
+        manager = self._create_manager()
+
+        mock_get_anchor.return_value = 'anchor-net-id'
+        # Return vni but no segment_id
+        mock_get_vni_segment.return_value = (5000, None)
+
+        manager.reconcile_single_vlan('net-1', 'physnet1', 100, action='add')
+
+        mock_ensure_infra.assert_called_once_with(manager)
+        mock_get_anchor.assert_called_once_with(manager)
+        mock_get_vni_segment.assert_called_once_with(
+            manager, 'net-1', 'physnet1', 100)
+        # Should return early, not proceed to chassis lookup
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
                        '_add_subport', autospec=True)
     def test_ensure_single_subport_creates_when_missing(self, mock_add):
         """Test _ensure_single_subport creates subport if missing."""
@@ -1971,11 +2100,12 @@ class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
         manager.neutron.network.get_trunk.return_value = trunk
 
         manager._ensure_single_subport(
-            'trunk-1', 'chassis-1', 'physnet1', 300, 'anchor-net-id', vni=5000)
+            'trunk-1', 'chassis-1', 'physnet1', 300, 'anchor-net-id',
+            'segment-id-1', vni=5000)
 
         mock_add.assert_called_once_with(
             manager, 'trunk-1', 'chassis-1', 'physnet1', 300, 'anchor-net-id',
-            vni=5000)
+            'segment-id-1', vni=5000)
 
     @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
                        '_add_subport', autospec=True)
@@ -1991,7 +2121,8 @@ class TestL2VNITrunkManagerTargetedReconciliation(tests_base.BaseTestCase):
         manager.neutron.network.get_trunk.return_value = trunk
 
         manager._ensure_single_subport(
-            'trunk-1', 'chassis-1', 'physnet1', 100, 'anchor-net-id')
+            'trunk-1', 'chassis-1', 'physnet1', 100, 'anchor-net-id',
+            'segment-id-1')
 
         mock_add.assert_not_called()
 

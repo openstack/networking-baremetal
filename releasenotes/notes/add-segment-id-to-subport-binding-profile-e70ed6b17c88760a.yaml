@@ -1,0 +1,9 @@
+---
+features:
+  - |
+    L2VNI trunk subports now include the Neutron VLAN segment UUID in
+    ``binding:profile['segment_id']``. This enables ML2 mechanism drivers
+    like networking-generic-switch to use segment-based cleanup logic
+    instead of parsing switch port configurations, allowing static trunk
+    port configurations on physical switches. See
+    `bug 2144875 <https://bugs.launchpad.net/networking-generic-switch/+bug/2144875>`_.
