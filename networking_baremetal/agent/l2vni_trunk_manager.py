@@ -802,17 +802,22 @@ class L2VNITrunkManager:
             if not hasattr(self.ovn_nb_idl, 'tables'):
                 return False
 
-            if 'Logical_Switch_Port' in self.ovn_nb_idl.tables:
-                lsp_table = self.ovn_nb_idl.tables['Logical_Switch_Port']
-                for lsp in lsp_table.rows.values():
-                    if (lsp.type == 'localnet'
-                            and lsp.options.get('network_name') == physnet):
-                        # Check if this port is on our logical switch
-                        if 'Logical_Switch' in self.ovn_nb_idl.tables:
-                            ls_table = self.ovn_nb_idl.tables['Logical_Switch']
-                            for ls in ls_table.rows.values():
-                                if ls.name == ls_name and lsp in ls.ports:
-                                    return True
+            if 'Logical_Switch_Port' not in self.ovn_nb_idl.tables:
+                return False
+
+            if 'Logical_Switch' not in self.ovn_nb_idl.tables:
+                return False
+
+            lsp_table = self.ovn_nb_idl.tables['Logical_Switch_Port']
+            ls_table = self.ovn_nb_idl.tables['Logical_Switch']
+            for lsp in lsp_table.rows.values():
+                if not (lsp.type == 'localnet'
+                        and lsp.options.get('network_name') == physnet):
+                    continue
+
+                for ls in ls_table.rows.values():
+                    if ls.name == ls_name and lsp in ls.ports:
+                        return True
 
         except (AttributeError, KeyError):
             LOG.exception("Failed to check for localnet port on network %s.",
@@ -832,15 +837,17 @@ class L2VNITrunkManager:
             if not hasattr(self.ovn_sb_idl, 'tables'):
                 return chassis_set
 
-            if 'Chassis' in self.ovn_sb_idl.tables:
-                for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
-                    bridge_mappings = chassis.other_config.get(
-                        'ovn-bridge-mappings', '')
-                    physnets = self._parse_bridge_mappings(bridge_mappings)
+            if 'Chassis' not in self.ovn_sb_idl.tables:
+                return chassis_set
 
-                    if physnet in physnets:
-                        # Chassis name IS the system-id
-                        chassis_set.add(chassis.name)
+            for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
+                bridge_mappings = chassis.other_config.get(
+                    'ovn-bridge-mappings', '')
+                physnets = self._parse_bridge_mappings(bridge_mappings)
+
+                if physnet in physnets:
+                    # Chassis name IS the system-id
+                    chassis_set.add(chassis.name)
 
         except (AttributeError, KeyError):
             LOG.exception("Failed to get chassis with physnet %s",
@@ -862,30 +869,34 @@ class L2VNITrunkManager:
             if not hasattr(self.ovn_nb_idl, 'tables'):
                 return chassis_set
 
-            # Find logical router ports connected to this network
-            if 'Logical_Router_Port' in self.ovn_nb_idl.tables:
-                lrp_table = self.ovn_nb_idl.tables['Logical_Router_Port']
-                for lrp in lrp_table.rows.values():
-                    # Check if this LRP is connected to our logical switch
-                    # via its peer LSP
-                    if 'Logical_Switch_Port' in self.ovn_nb_idl.tables:
-                        lsp_table = (
-                            self.ovn_nb_idl.tables['Logical_Switch_Port'])
-                        for lsp in lsp_table.rows.values():
-                            if (lsp.type == 'router'
-                                    and lsp.options.get('router-port')
-                                    == lrp.name):
-                                # Find the logical switch
-                                if 'Logical_Switch' in self.ovn_nb_idl.tables:
-                                    ls_table = (
-                                        self.ovn_nb_idl.tables[
-                                            'Logical_Switch'])
-                                    for ls in ls_table.rows.values():
-                                        if (ls.name == ls_name
-                                                and lsp in ls.ports):
-                                            # Found a router port on network
-                                            chassis_set.update(
-                                                self._get_chassis_for_lrp(lrp))
+            if 'Logical_Router_Port' not in self.ovn_nb_idl.tables:
+                return chassis_set
+
+            if 'Logical_Switch_Port' not in self.ovn_nb_idl.tables:
+                return chassis_set
+
+            if 'Logical_Switch' not in self.ovn_nb_idl.tables:
+                return chassis_set
+
+            lrp_table = self.ovn_nb_idl.tables['Logical_Router_Port']
+            lsp_table = self.ovn_nb_idl.tables['Logical_Switch_Port']
+            ls_table = self.ovn_nb_idl.tables['Logical_Switch']
+
+            for lrp in lrp_table.rows.values():
+                # Check if this LRP is connected to our logical switch
+                # via its peer LSP
+                for lsp in lsp_table.rows.values():
+                    if not (lsp.type == 'router'
+                            and lsp.options.get('router-port') == lrp.name):
+                        continue
+
+                    # Find the logical switch
+                    for ls in ls_table.rows.values():
+                        if ls.name == ls_name and lsp in ls.ports:
+                            # Found a router port on network
+                            chassis_set.update(self._get_chassis_for_lrp(lrp))
+                            # Found the switch for this LSP, check next LRP
+                            break
 
         except (AttributeError, KeyError):
             LOG.exception("Failed to get chassis for router ports on "
