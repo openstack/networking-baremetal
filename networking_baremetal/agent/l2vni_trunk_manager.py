@@ -88,6 +88,15 @@ def _get_subport_name(system_id, physnet, vlan_id):
     return f"l2vni-subport-{system_id}-{physnet}-vlan{vlan_id}"
 
 
+def _get_ha_group_network_name(ha_group_name):
+    """Generate consistent HA chassis group network name.
+
+    :param ha_group_name: OVN HA_Chassis_Group name
+    :returns: Network name string
+    """
+    return f"l2vni-ha-group-{ha_group_name}"
+
+
 class L2VNITrunkManager:
     """Manages L2VNI trunk ports and subports for network nodes."""
 
@@ -117,6 +126,9 @@ class L2VNITrunkManager:
         # ironic_neutron_agent.py:_reconcile_l2vni_trunks), which prevents
         # concurrent execution. Therefore, no additional locking is needed.
         self._ironic_cache = {}
+        # Chassis cache: chassis_name -> chassis_object
+        # Built once per reconciliation cycle for performance
+        self._chassis_cache = None
 
     def _should_manage_chassis(self, system_id):
         """Check if this agent should manage this chassis based on hash ring.
@@ -132,6 +144,27 @@ class L2VNITrunkManager:
         # Hashring requires bytes for md5 hashing
         return (self.agent_id in
                 self.member_manager.hashring[system_id.encode('utf-8')])
+
+    def _build_chassis_cache(self):
+        """Build chassis name to chassis object cache.
+
+        Only caches chassis that this agent should manage (based on hash
+        ring).
+
+        :returns: dict {chassis_name: chassis_object}
+        """
+        cache = {}
+        if not (hasattr(self.ovn_sb_idl, 'tables')
+                and 'Chassis' in self.ovn_sb_idl.tables):
+            return cache
+
+        cache = {
+            chassis.name: chassis
+            for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values()
+            if self._should_manage_chassis(chassis.name)
+        }
+
+        return cache
 
     def reconcile(self):
         """Main reconciliation entry point.
@@ -150,6 +183,9 @@ class L2VNITrunkManager:
                 LOG.debug("OVN connections not available, skipping "
                           "reconciliation")
                 return
+
+            # Build chassis cache once for this reconciliation cycle
+            self._chassis_cache = self._build_chassis_cache()
 
             # Ensure infrastructure networks exist
             self._ensure_infrastructure_networks()
@@ -180,6 +216,9 @@ class L2VNITrunkManager:
             LOG.exception("Unexpected error during L2VNI trunk "
                           "reconciliation.")
             # Don't re-raise - let reconciliation continue on next interval
+        finally:
+            # Clear chassis cache to free memory between reconciliation cycles
+            self._chassis_cache = None
 
     def reconcile_single_vlan(self, network_id, physnet, vlan_id,
                               action='add'):
@@ -204,6 +243,9 @@ class L2VNITrunkManager:
                 LOG.error("OVN connections not available, cannot perform "
                           "targeted reconciliation")
                 return
+
+            # Build chassis cache for this operation
+            self._chassis_cache = self._build_chassis_cache()
 
             # Ensure infrastructure networks exist (creates if missing)
             self._ensure_infrastructure_networks()
@@ -266,6 +308,9 @@ class L2VNITrunkManager:
                 "Failed targeted reconciliation for VLAN %d on "
                 "physnet %s, will retry on next periodic reconciliation",
                 vlan_id, physnet)
+        finally:
+            # Clear chassis cache to free memory
+            self._chassis_cache = None
 
     def _ensure_infrastructure_networks(self):
         """Ensure ha_chassis_group and subport anchor networks exist.
@@ -384,7 +429,7 @@ class L2VNITrunkManager:
         :param ha_group: OVN HA_Chassis_Group row
         :returns: Network ID
         """
-        network_name = f"l2vni-ha-group-{ha_group.name}"
+        network_name = _get_ha_group_network_name(ha_group.name)
         description = f'L2VNI network for ha_chassis_group {ha_group.name}'
         return self._ensure_network(network_name, description)
 
@@ -637,26 +682,36 @@ class L2VNITrunkManager:
             for ha_chassis in ha_group.ha_chassis:
                 chassis = self._get_chassis_by_name(ha_chassis.chassis_name)
                 # Chassis name IS the system-id
-                if chassis and chassis.name == system_id:
-                    # Found the group, find its network
-                    network_name = f"l2vni-ha-group-{ha_group.name}"
-                    networks = self.neutron.network.networks(
-                        name=network_name)
-                    # networks should be a list, because were asking the api
-                    # for a list of networks matching the name with a single
-                    # resulting entry if found, otherwise an empty list.
-                    for network in networks:
-                        # If we have a match, return the first entry.
-                        return network.id
+                if not chassis or chassis.name != system_id:
+                    continue
+
+                # Found the group, find its network
+                network_name = _get_ha_group_network_name(ha_group.name)
+                networks = self.neutron.network.networks(
+                    name=network_name)
+                # networks should be a list, because were asking the api
+                # for a list of networks matching the name with a single
+                # resulting entry if found, otherwise an empty list.
+                for network in networks:
+                    # If we have a match, return the first entry.
+                    return network.id
 
         return None
 
     def _get_chassis_by_name(self, chassis_name):
         """Get OVN chassis by name.
 
+        Uses chassis cache if available (during reconciliation), otherwise
+        performs direct lookup.
+
         :param chassis_name: Chassis name
         :returns: Chassis row or None
         """
+        # Use cache if available (during reconciliation)
+        if self._chassis_cache is not None:
+            return self._chassis_cache.get(chassis_name)
+
+        # Fallback to direct lookup (outside reconciliation)
         try:
             if not hasattr(self.ovn_sb_idl, 'tables'):
                 return None
@@ -668,6 +723,29 @@ class L2VNITrunkManager:
 
         except (AttributeError, KeyError):
             LOG.exception("Failed to get chassis %s", chassis_name)
+
+        return None
+
+    def _get_logical_switch_by_name(self, ls_name):
+        """Get OVN logical switch by name.
+
+        :param ls_name: Logical switch name
+        :returns: Logical_Switch row or None
+        """
+        try:
+            if not hasattr(self.ovn_nb_idl, 'tables'):
+                return None
+
+            if 'Logical_Switch' not in self.ovn_nb_idl.tables:
+                return None
+
+            ls_table = self.ovn_nb_idl.tables['Logical_Switch']
+            for ls in ls_table.rows.values():
+                if ls.name == ls_name:
+                    return ls
+
+        except (AttributeError, KeyError):
+            LOG.exception("Failed to get logical switch %s", ls_name)
 
         return None
 
@@ -829,25 +907,17 @@ class L2VNITrunkManager:
         """
         try:
             ls_name = ovn_utils.ovn_name(network_id)
-            if not hasattr(self.ovn_nb_idl, 'tables'):
+            target_ls = self._get_logical_switch_by_name(ls_name)
+            if not target_ls:
                 return False
 
-            if 'Logical_Switch_Port' not in self.ovn_nb_idl.tables:
-                return False
-
-            if 'Logical_Switch' not in self.ovn_nb_idl.tables:
-                return False
-
-            lsp_table = self.ovn_nb_idl.tables['Logical_Switch_Port']
-            ls_table = self.ovn_nb_idl.tables['Logical_Switch']
-            for lsp in lsp_table.rows.values():
-                if not (lsp.type == 'localnet'
-                        and lsp.options.get('network_name') == physnet):
+            # Check if any port on this switch is a localnet for physnet
+            for lsp in target_ls.ports:
+                if lsp.type != 'localnet':
                     continue
 
-                for ls in ls_table.rows.values():
-                    if ls.name == ls_name and lsp in ls.ports:
-                        return True
+                if lsp.options.get('network_name') == physnet:
+                    return True
 
         except (AttributeError, KeyError):
             LOG.exception("Failed to check for localnet port on network %s.",
@@ -896,37 +966,31 @@ class L2VNITrunkManager:
 
         try:
             ls_name = ovn_utils.ovn_name(network_id)
-            if not hasattr(self.ovn_nb_idl, 'tables'):
+            target_ls = self._get_logical_switch_by_name(ls_name)
+            if not target_ls:
                 return chassis_set
 
             if 'Logical_Router_Port' not in self.ovn_nb_idl.tables:
                 return chassis_set
 
-            if 'Logical_Switch_Port' not in self.ovn_nb_idl.tables:
-                return chassis_set
-
-            if 'Logical_Switch' not in self.ovn_nb_idl.tables:
-                return chassis_set
-
             lrp_table = self.ovn_nb_idl.tables['Logical_Router_Port']
-            lsp_table = self.ovn_nb_idl.tables['Logical_Switch_Port']
-            ls_table = self.ovn_nb_idl.tables['Logical_Switch']
 
-            for lrp in lrp_table.rows.values():
-                # Check if this LRP is connected to our logical switch
-                # via its peer LSP
-                for lsp in lsp_table.rows.values():
-                    if not (lsp.type == 'router'
-                            and lsp.options.get('router-port') == lrp.name):
-                        continue
+            # Build set of router-port LRP names on this switch
+            # by iterating through the switch's ports once
+            router_lrp_names = set()
+            for lsp in target_ls.ports:
+                if lsp.type != 'router':
+                    continue
 
-                    # Find the logical switch
-                    for ls in ls_table.rows.values():
-                        if ls.name == ls_name and lsp in ls.ports:
-                            # Found a router port on network
-                            chassis_set.update(self._get_chassis_for_lrp(lrp))
-                            # Found the switch for this LSP, check next LRP
-                            break
+                router_port_name = lsp.options.get('router-port')
+                if router_port_name:
+                    router_lrp_names.add(router_port_name)
+
+            # Get chassis for each connected LRP
+            for lrp_name in router_lrp_names:
+                lrp = lrp_table.rows.get(lrp_name)
+                if lrp:
+                    chassis_set.update(self._get_chassis_for_lrp(lrp))
 
         except (AttributeError, KeyError):
             LOG.exception("Failed to get chassis for router ports on "
