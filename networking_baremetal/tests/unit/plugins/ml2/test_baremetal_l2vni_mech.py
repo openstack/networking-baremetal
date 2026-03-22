@@ -429,17 +429,13 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
                        '_get_ovn_client', new_callable=mock.PropertyMock)
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
                        '_chassis_can_forward_physnet', autospec=True)
-    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
-                       '_get_local_chassis_name', autospec=True)
-    def test_ensure_localnet_port_success(self, mock_get_chassis_name,
-                                          mock_can_forward,
+    def test_ensure_localnet_port_success(self, mock_can_forward,
                                           mock_get_client):
         """Test successful localnet port creation"""
         mock_context = mock.Mock()
         mock_ovn_client = mock.Mock()
         mock_get_client.return_value = mock_ovn_client
         mock_can_forward.return_value = True
-        mock_get_chassis_name.return_value = 'test-chassis'
 
         # Mock that port doesn't exist (lookup returns None)
         mock_ovn_client._nb_idl.lookup.return_value = None
@@ -451,9 +447,8 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
         self.driver._ensure_localnet_port(
             mock_context, network_id, physnet, vlan_id)
 
-        # Should create localnet port with requested-chassis
+        # Should create localnet port
         mock_ovn_client._nb_idl.create_lswitch_port.assert_called_once()
-        mock_ovn_client._nb_idl.db_set.assert_called_once()
         mock_ovn_client._transaction.assert_called_once()
 
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
@@ -511,22 +506,17 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
                        '_get_ovn_client', new_callable=mock.PropertyMock)
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
                        '_chassis_can_forward_physnet', autospec=True)
-    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
-                       '_get_local_chassis_name', autospec=True)
     def test_ensure_localnet_port_already_exists(self,
-                                                 mock_get_chassis_name,
                                                  mock_can_forward,
                                                  mock_get_client):
         """Test localnet port creation when port already exists"""
         mock_ovn_client = mock.Mock()
         mock_get_client.return_value = mock_ovn_client
         mock_can_forward.return_value = True
-        mock_get_chassis_name.return_value = 'test-chassis'
 
-        # Mock that port already exists with matching VLAN tag and chassis
+        # Mock that port already exists with matching VLAN tag
         existing_port = mock.Mock()
         existing_port.tag = [100]  # OVN stores tags as list
-        existing_port.options = {'requested-chassis': 'test-chassis'}
         mock_ovn_client._nb_idl.lookup.return_value = existing_port
 
         mock_context = mock.Mock()
@@ -541,20 +531,16 @@ class TestL2vniLocalnetPort(tests_base.BaseTestCase):
                        '_get_ovn_client', new_callable=mock.PropertyMock)
     @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
                        '_chassis_can_forward_physnet', autospec=True)
-    @mock.patch.object(baremetal_l2vni_mapping.L2vniMechanismDriver,
-                       '_get_local_chassis_name', autospec=True)
     def test_ensure_localnet_port_vlan_tag_mismatch(
-            self, mock_get_chassis_name, mock_can_forward, mock_get_client):
+            self, mock_can_forward, mock_get_client):
         """Test localnet port recreation when VLAN tag changes"""
         mock_ovn_client = mock.Mock()
         mock_get_client.return_value = mock_ovn_client
         mock_can_forward.return_value = True
-        mock_get_chassis_name.return_value = 'test-chassis'
 
         # Mock that port exists with old VLAN tag 107
         existing_port = mock.Mock()
         existing_port.tag = [107]
-        existing_port.options = {'requested-chassis': 'test-chassis'}
         mock_ovn_client._nb_idl.lookup.return_value = existing_port
 
         mock_context = mock.Mock()
