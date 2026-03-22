@@ -199,8 +199,6 @@ class L2vniMechanismDriver(api.MechanismDriver):
         :param physnet: Physical network name
         :returns: True if any chassis has physnet, False otherwise
         """
-        # TODO(TheJulia): We should look at simplifying this logic, see
-        # https://review.opendev.org/c/openstack/networking-baremetal/+/973889/9/networking_baremetal/plugins/ml2/baremetal_l2vni_mapping.py
         try:
             if not hasattr(ovn_client, '_sb_idl'):
                 LOG.warning("No southbound connection available, cannot "
@@ -209,45 +207,22 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 # closed
                 return True
 
-            # Check all chassis in the cluster
-            chassis_table = ovn_client._sb_idl.tables['Chassis']
-            chassis_list = list(chassis_table.rows.values())
-            LOG.debug("Checking %d chassis for physnet %s",
-                      len(chassis_list), physnet)
+            # Use OVN IDL's built-in method to get chassis and their physnets
+            chassis_physnets = ovn_client._sb_idl.get_chassis_and_physnets()
 
-            for chassis in chassis_list:
-                # Get bridge mappings from other_config (OVN 20.06+)
-                bridge_mappings = chassis.other_config.get(
-                    'ovn-bridge-mappings', '')
-
-                # Format is "physnet1:br-provider,physnet2:br-ex"
-                physnets = [mapping.split(':')[0].strip()
-                            for mapping in bridge_mappings.split(',')
-                            if ':' in mapping]
-
+            for chassis_name, physnets in chassis_physnets.items():
                 if physnet in physnets:
-                    LOG.debug("Found physnet %s on chassis %s with bridge "
-                              "mappings: %s", physnet, chassis.name,
-                              bridge_mappings)
+                    LOG.debug("Found physnet %s on chassis %s",
+                              physnet, chassis_name)
                     return True
 
-                # We've hit the bottom of the chassis check loop, and
-                # did not find what we are looking for, meaning there
-                # is an input mismatch, or misconfiguration someplace...
-                # or the operator is intentionally partitioning everything
-                # apart.
-                # TODO(TheJulia): Maybe one-day make this configurable?
-                found = ', '.join(physnets)
-                LOG.warning(
-                    "Evaluated chassis %s and did not find physnet %s, "
-                    "this may be acceptable with complex environments "
-                    "or indication of a misconfiguration. Found: %s.",
-                    chassis.name, physnet, found)
-
             # No chassis has this physnet - this is an error condition
-            LOG.error("Physical network %s not found in bridge-mappings "
-                      "on any chassis in the OVN cluster. Check OVN "
-                      "configuration.", physnet)
+            chassis_list = ', '.join(chassis_physnets.keys())
+            LOG.error(
+                "Physical network %s not found in bridge-mappings on any "
+                "chassis in the OVN cluster. Checked %d chassis: %s. "
+                "Check OVN configuration.",
+                physnet, len(chassis_physnets), chassis_list)
             return False
 
         except Exception as e:
