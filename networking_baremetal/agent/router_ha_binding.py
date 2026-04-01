@@ -206,6 +206,50 @@ class RouterHABindingManager:
                           "network management", network_id)
             return False
 
+    def _get_router_ports_for_networks(self, network_ids):
+        """Query router interface ports for multiple networks in chunks.
+
+        Queries Neutron for router interface ports on the specified networks,
+        using chunked queries to avoid URL length limits when filtering by
+        many network IDs.
+
+        :param network_ids: List of Neutron network UUIDs
+        :returns: Dict mapping network_id -> list of port objects
+        """
+        ports_by_network = {}
+
+        # Query in chunks of 100 to avoid URL length limits
+        # (100 UUIDs = ~3.6KB in URL, well under 8KB web server limits;
+        # 3000 networks would create ~108KB URL, causing failures)
+        chunk_size = 100
+        num_chunks = (len(network_ids) + chunk_size - 1) // chunk_size
+
+        LOG.debug("Querying router ports for %d networks in %d chunk(s)",
+                  len(network_ids), num_chunks)
+
+        for i in range(0, len(network_ids), chunk_size):
+            chunk = network_ids[i:i + chunk_size]
+
+            try:
+                chunk_ports = list(self.neutron_client.network.ports(
+                    network_id=chunk,
+                    device_owner=n_const.DEVICE_OWNER_ROUTER_INTF))
+
+                # Group ports by network_id
+                for port in chunk_ports:
+                    network_id = port.network_id
+                    if network_id not in ports_by_network:
+                        ports_by_network[network_id] = []
+                    ports_by_network[network_id].append(port)
+
+            except sdk_exc.OpenStackCloudException:
+                LOG.exception("Failed to query router interface ports for "
+                              "network chunk during reconciliation")
+                # Continue with remaining chunks
+                continue
+
+        return ports_by_network
+
     def _get_networks_with_ha_chassis_groups(self):
         """Find all networks that have HA chassis groups.
 
@@ -277,37 +321,43 @@ class RouterHABindingManager:
             if not network_ha_groups:
                 return
 
+            # Filter to only networks this agent should manage
+            managed_network_ids = [
+                nid for nid in network_ha_groups.keys()
+                if self._should_manage_network(nid)
+            ]
+
+            if not managed_network_ids:
+                LOG.debug("No managed networks found during reconciliation")
+                return
+
+            # Query router ports for managed networks (chunked for safety)
+            ports_by_network = self._get_router_ports_for_networks(
+                managed_network_ids)
+
             networks_processed = 0
             ports_updated = 0
 
-            for network_id, ha_chassis_group in network_ha_groups.items():
-                if not self._should_manage_network(network_id):
-                    continue
-
+            for network_id in managed_network_ids:
+                ha_chassis_group = network_ha_groups[network_id]
                 networks_processed += 1
 
-                try:
-                    router_ports = self._get_router_interface_ports(network_id)
+                router_ports = ports_by_network.get(network_id, [])
 
-                    if not router_ports:
-                        continue
+                if not router_ports:
+                    continue
 
-                    for port in router_ports:
-                        try:
-                            updated = self._update_lrp_ha_chassis_group(
-                                port.id, ha_chassis_group, network_id)
-                            if updated:
-                                ports_updated += 1
+                for port in router_ports:
+                    try:
+                        updated = self._update_lrp_ha_chassis_group(
+                            port.id, ha_chassis_group, network_id)
+                        if updated:
+                            ports_updated += 1
 
-                        except (ovs_exc.OvsdbAppException, RuntimeError,
-                                AttributeError):
-                            LOG.exception("Failed to reconcile router port %s",
-                                          port.id)
-
-                except sdk_exc.OpenStackCloudException:
-                    LOG.exception("Failed to query router ports for network "
-                                  "%s "
-                                  "during reconciliation", network_id)
+                    except (ovs_exc.OvsdbAppException, RuntimeError,
+                            AttributeError):
+                        LOG.exception("Failed to reconcile router port %s",
+                                      port.id)
 
             LOG.info("Router HA binding reconciliation complete: processed %d "
                      "networks, updated %d router ports",

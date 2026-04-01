@@ -30,9 +30,11 @@ from networking_baremetal.agent import router_ha_binding
 class FakePort:
     """Fake Neutron Port object."""
 
-    def __init__(self, port_id, device_owner=n_const.DEVICE_OWNER_ROUTER_INTF):
+    def __init__(self, port_id, device_owner=n_const.DEVICE_OWNER_ROUTER_INTF,
+                 network_id=None):
         self.id = port_id
         self.device_owner = device_owner
+        self.network_id = network_id
 
 
 class FakeLogicalRouterPort:
@@ -551,8 +553,10 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
         ha_group1 = 'ha-group-1'
         ha_group2 = 'ha-group-2'
 
-        port1 = FakePort('port-1')
-        port2 = FakePort('port-2')
+        port1 = FakePort('port-1', network_id=network1_id)
+        port2 = FakePort('port-2', network_id=network1_id)
+        port3 = FakePort('port-3', network_id=network2_id)
+        port4 = FakePort('port-4', network_id=network2_id)
 
         with mock.patch.object(
                 self.manager, '_get_networks_with_ha_chassis_groups',
@@ -562,17 +566,17 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
             with mock.patch.object(
                     self.manager, '_should_manage_network',
                     autospec=True, return_value=True):
+                # Mock the batched Neutron API call
+                self.mock_neutron.network.ports.return_value = [
+                    port1, port2, port3, port4]
                 with mock.patch.object(
-                        self.manager, '_get_router_interface_ports',
-                        autospec=True, return_value=[port1, port2]):
-                    with mock.patch.object(
-                            self.manager,
-                            '_update_lrp_ha_chassis_group',
-                            autospec=True,
-                            return_value=True) as mock_update:
-                        self.manager.reconcile()
+                        self.manager,
+                        '_update_lrp_ha_chassis_group',
+                        autospec=True,
+                        return_value=True) as mock_update:
+                    self.manager.reconcile()
 
-                        self.assertEqual(mock_update.call_count, 4)
+                    self.assertEqual(mock_update.call_count, 4)
 
     def test_reconcile_no_networks(self):
         """Test reconcile with no networks."""
@@ -593,6 +597,9 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
         ha_group1 = 'ha-group-1'
         ha_group2 = 'ha-group-2'
 
+        port1 = FakePort('port-1', network_id=network1_id)
+        port2 = FakePort('port-2', network_id=network2_id)
+
         with mock.patch.object(
                 self.manager, '_get_networks_with_ha_chassis_groups',
                 autospec=True,
@@ -602,17 +609,16 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
                     self.manager, '_should_manage_network',
                     autospec=True,
                     side_effect=lambda nid: nid == network1_id):
+                # Mock the batched Neutron API call
+                self.mock_neutron.network.ports.return_value = [port1, port2]
                 with mock.patch.object(
-                        self.manager, '_get_router_interface_ports',
-                        autospec=True,
-                        return_value=[FakePort('port-1')]) as mock_get_ports:
-                    with mock.patch.object(
-                            self.manager,
-                            '_update_lrp_ha_chassis_group',
-                            autospec=True, return_value=True):
-                        self.manager.reconcile()
+                        self.manager,
+                        '_update_lrp_ha_chassis_group',
+                        autospec=True, return_value=True) as mock_update:
+                    self.manager.reconcile()
 
-                        mock_get_ports.assert_called_once_with(network1_id)
+                    # Only network1 should be processed
+                    mock_update.assert_called_once()
 
     def test_reconcile_skips_networks_without_router_ports(self):
         """Test reconcile skips networks without router ports."""
@@ -625,24 +631,23 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
             with mock.patch.object(
                     self.manager, '_should_manage_network',
                     autospec=True, return_value=True):
+                # Mock the batched Neutron API call with no ports
+                self.mock_neutron.network.ports.return_value = []
                 with mock.patch.object(
-                        self.manager, '_get_router_interface_ports',
-                        autospec=True, return_value=[]):
-                    with mock.patch.object(
-                            self.manager,
-                            '_update_lrp_ha_chassis_group',
-                            autospec=True) as mock_update:
-                        self.manager.reconcile()
+                        self.manager,
+                        '_update_lrp_ha_chassis_group',
+                        autospec=True) as mock_update:
+                    self.manager.reconcile()
 
-                        mock_update.assert_not_called()
+                    mock_update.assert_not_called()
 
     def test_reconcile_handles_port_update_errors(self):
         """Test reconcile continues after port update errors."""
         network_id = 'network-1'
         ha_group = 'ha-group-1'
 
-        port1 = FakePort('port-1')
-        port2 = FakePort('port-2')
+        port1 = FakePort('port-1', network_id=network_id)
+        port2 = FakePort('port-2', network_id=network_id)
 
         with mock.patch.object(
                 self.manager, '_get_networks_with_ha_chassis_groups',
@@ -650,21 +655,20 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
             with mock.patch.object(
                     self.manager, '_should_manage_network',
                     autospec=True, return_value=True):
+                # Mock the batched Neutron API call
+                self.mock_neutron.network.ports.return_value = [port1, port2]
                 with mock.patch.object(
-                        self.manager, '_get_router_interface_ports',
-                        autospec=True, return_value=[port1, port2]):
-                    with mock.patch.object(
-                            self.manager,
-                            '_update_lrp_ha_chassis_group',
-                            autospec=True) as mock_update:
-                        mock_update.side_effect = [
-                            ovs_exc.OvsdbAppException(),
-                            True
-                        ]
+                        self.manager,
+                        '_update_lrp_ha_chassis_group',
+                        autospec=True) as mock_update:
+                    mock_update.side_effect = [
+                        ovs_exc.OvsdbAppException(),
+                        True
+                    ]
 
-                        self.manager.reconcile()
+                    self.manager.reconcile()
 
-                        self.assertEqual(mock_update.call_count, 2)
+                    self.assertEqual(mock_update.call_count, 2)
 
     def test_reconcile_handles_query_errors(self):
         """Test reconcile handles Neutron query errors."""
@@ -677,12 +681,10 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
             with mock.patch.object(
                     self.manager, '_should_manage_network',
                     autospec=True, return_value=True):
-                with mock.patch.object(
-                        self.manager, '_get_router_interface_ports',
-                        autospec=True,
-                        side_effect=sdk_exc.OpenStackCloudException(
-                            "API error")):
-                    self.manager.reconcile()
+                # Mock the batched Neutron API call to raise exception
+                self.mock_neutron.network.ports.side_effect = \
+                    sdk_exc.OpenStackCloudException("API error")
+                self.manager.reconcile()
 
     def test_reconcile_handles_general_exception(self):
         """Test reconcile handles general exceptions."""
@@ -697,9 +699,9 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
         network_id = 'network-1'
         ha_group = 'ha-group-1'
 
-        port1 = FakePort('port-1')
-        port2 = FakePort('port-2')
-        port3 = FakePort('port-3')
+        port1 = FakePort('port-1', network_id=network_id)
+        port2 = FakePort('port-2', network_id=network_id)
+        port3 = FakePort('port-3', network_id=network_id)
 
         with mock.patch.object(
                 self.manager, '_get_networks_with_ha_chassis_groups',
@@ -707,19 +709,136 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
             with mock.patch.object(
                     self.manager, '_should_manage_network',
                     autospec=True, return_value=True):
+                # Mock the batched Neutron API call
+                self.mock_neutron.network.ports.return_value = [
+                    port1, port2, port3]
                 with mock.patch.object(
-                        self.manager, '_get_router_interface_ports',
-                        autospec=True,
-                        return_value=[port1, port2, port3]):
-                    with mock.patch.object(
-                            self.manager,
-                            '_update_lrp_ha_chassis_group',
-                            autospec=True) as mock_update:
-                        mock_update.side_effect = [True, False, True]
+                        self.manager,
+                        '_update_lrp_ha_chassis_group',
+                        autospec=True) as mock_update:
+                    mock_update.side_effect = [True, False, True]
 
-                        self.manager.reconcile()
+                    self.manager.reconcile()
 
-                        self.assertEqual(mock_update.call_count, 3)
+                    self.assertEqual(mock_update.call_count, 3)
+
+    def test_get_router_ports_for_networks_single_chunk(self):
+        """Test _get_router_ports_for_networks with networks under limit."""
+        network_ids = ['net-1', 'net-2', 'net-3']
+        port1 = FakePort('port-1', network_id='net-1')
+        port2 = FakePort('port-2', network_id='net-2')
+        port3 = FakePort('port-3', network_id='net-3')
+
+        # Mock single API call returning all ports
+        self.mock_neutron.network.ports.return_value = [port1, port2, port3]
+
+        result = self.manager._get_router_ports_for_networks(network_ids)
+
+        # Verify single API call with all network IDs
+        self.mock_neutron.network.ports.assert_called_once_with(
+            network_id=network_ids,
+            device_owner=n_const.DEVICE_OWNER_ROUTER_INTF)
+
+        # Verify correct grouping
+        self.assertEqual(3, len(result))
+        self.assertEqual([port1], result['net-1'])
+        self.assertEqual([port2], result['net-2'])
+        self.assertEqual([port3], result['net-3'])
+
+    def test_get_router_ports_for_networks_multiple_chunks(self):
+        """Test _get_router_ports_for_networks with chunking."""
+        # Create 250 network IDs (will require 3 chunks of 100)
+        network_ids = [f'net-{i}' for i in range(250)]
+
+        # Create ports for some networks
+        ports_chunk1 = [FakePort(f'port-{i}', network_id=f'net-{i}')
+                        for i in range(50)]
+        ports_chunk2 = [FakePort(f'port-{i}', network_id=f'net-{i}')
+                        for i in range(100, 150)]
+        ports_chunk3 = [FakePort(f'port-{i}', network_id=f'net-{i}')
+                        for i in range(200, 225)]
+
+        # Mock API calls returning different ports per chunk
+        self.mock_neutron.network.ports.side_effect = [
+            ports_chunk1, ports_chunk2, ports_chunk3]
+
+        result = self.manager._get_router_ports_for_networks(network_ids)
+
+        # Verify 3 API calls (250 networks / 100 chunk size = 3 chunks)
+        self.assertEqual(3, self.mock_neutron.network.ports.call_count)
+
+        # Verify chunks were correct size
+        call_args_list = self.mock_neutron.network.ports.call_args_list
+        self.assertEqual(100, len(call_args_list[0].kwargs['network_id']))
+        self.assertEqual(100, len(call_args_list[1].kwargs['network_id']))
+        self.assertEqual(50, len(call_args_list[2].kwargs['network_id']))
+
+        # Verify correct grouping (125 ports total)
+        self.assertEqual(125, len(result))
+        self.assertIn('net-0', result)
+        self.assertIn('net-100', result)
+        self.assertIn('net-200', result)
+
+    def test_get_router_ports_for_networks_multiple_ports_per_network(self):
+        """Test grouping multiple ports for same network."""
+        network_ids = ['net-1']
+        port1 = FakePort('port-1', network_id='net-1')
+        port2 = FakePort('port-2', network_id='net-1')
+        port3 = FakePort('port-3', network_id='net-1')
+
+        self.mock_neutron.network.ports.return_value = [port1, port2, port3]
+
+        result = self.manager._get_router_ports_for_networks(network_ids)
+
+        # Verify all ports grouped under same network
+        self.assertEqual(1, len(result))
+        self.assertEqual(3, len(result['net-1']))
+        self.assertIn(port1, result['net-1'])
+        self.assertIn(port2, result['net-1'])
+        self.assertIn(port3, result['net-1'])
+
+    def test_get_router_ports_for_networks_empty_list(self):
+        """Test _get_router_ports_for_networks with empty network list."""
+        result = self.manager._get_router_ports_for_networks([])
+
+        # Should return empty dict without making API calls
+        self.assertEqual({}, result)
+        self.mock_neutron.network.ports.assert_not_called()
+
+    def test_get_router_ports_for_networks_no_ports_found(self):
+        """Test _get_router_ports_for_networks when no ports exist."""
+        network_ids = ['net-1', 'net-2']
+        self.mock_neutron.network.ports.return_value = []
+
+        result = self.manager._get_router_ports_for_networks(network_ids)
+
+        # Should return empty dict
+        self.assertEqual({}, result)
+        self.mock_neutron.network.ports.assert_called_once()
+
+    def test_get_router_ports_for_networks_handles_chunk_failure(self):
+        """Test _get_router_ports_for_networks continues on chunk failure."""
+        # Create 150 network IDs (2 chunks)
+        network_ids = [f'net-{i}' for i in range(150)]
+
+        ports_chunk2 = [FakePort(f'port-{i}', network_id=f'net-{i}')
+                        for i in range(100, 150)]
+
+        # First chunk fails, second succeeds
+        self.mock_neutron.network.ports.side_effect = [
+            sdk_exc.OpenStackCloudException("API error"),
+            ports_chunk2
+        ]
+
+        result = self.manager._get_router_ports_for_networks(network_ids)
+
+        # Should have results from second chunk only
+        self.assertEqual(50, len(result))
+        self.assertIn('net-100', result)
+        self.assertNotIn('net-0', result)
+
+        # Verify both chunks were attempted
+        self.assertEqual(2, self.mock_neutron.network.ports.call_count)
 
 
 class TestHAChassisGroupNetworkEvent(tests_base.BaseTestCase):
