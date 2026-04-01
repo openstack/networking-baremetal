@@ -84,24 +84,10 @@ class TestL2vniMechanismDriver(tests_base.BaseTestCase):
         """Test chassis can forward physnet returns True"""
         mock_ovn_client = mock.Mock()
 
-        # Mock chassis 1 with physnet1
-        mock_chassis1 = mock.Mock()
-        mock_chassis1.name = 'chassis-1'
-        mock_chassis1.external_ids = {
-            'ovn-bridge-mappings': 'physnet1:br-provider,physnet2:br-ex'
-        }
-
-        # Mock chassis 2 without our physnet
-        mock_chassis2 = mock.Mock()
-        mock_chassis2.name = 'chassis-2'
-        mock_chassis2.external_ids = {
-            'ovn-bridge-mappings': 'physnet3:br-other'
-        }
-
-        mock_ovn_client._sb_idl.tables = {
-            'Chassis': mock.Mock(rows=mock.Mock(
-                values=mock.Mock(return_value=[mock_chassis1, mock_chassis2])
-            ))
+        # Mock get_chassis_and_physnets to return multiple chassis
+        mock_ovn_client._sb_idl.get_chassis_and_physnets.return_value = {
+            'chassis-1': ['physnet1', 'physnet2'],
+            'chassis-2': ['physnet3']
         }
 
         result = self.driver._chassis_can_forward_physnet(
@@ -112,17 +98,9 @@ class TestL2vniMechanismDriver(tests_base.BaseTestCase):
         """Test chassis can forward physnet returns False"""
         mock_ovn_client = mock.Mock()
 
-        # Mock chassis without the requested physnet
-        mock_chassis = mock.Mock()
-        mock_chassis.name = 'test-chassis'
-        mock_chassis.other_config = {
-            'ovn-bridge-mappings': 'physnet1:br-provider'
-        }
-
-        mock_ovn_client._sb_idl.tables = {
-            'Chassis': mock.Mock(rows=mock.Mock(
-                values=mock.Mock(return_value=[mock_chassis])
-            ))
+        # Mock get_chassis_and_physnets to return chassis without physnet2
+        mock_ovn_client._sb_idl.get_chassis_and_physnets.return_value = {
+            'test-chassis': ['physnet1']
         }
 
         result = self.driver._chassis_can_forward_physnet(
