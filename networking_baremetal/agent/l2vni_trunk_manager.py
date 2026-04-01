@@ -153,11 +153,6 @@ class L2VNITrunkManager:
 
         :returns: dict {chassis_name: chassis_object}
         """
-        cache = {}
-        if not (hasattr(self.ovn_sb_idl, 'tables')
-                and 'Chassis' in self.ovn_sb_idl.tables):
-            return cache
-
         cache = {
             chassis.name: chassis
             for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values()
@@ -436,25 +431,10 @@ class L2VNITrunkManager:
     def _get_ha_chassis_groups(self):
         """Get all ha_chassis_groups from OVN.
 
-        :returns: List of OVN HA_Chassis_Group rows
+        :returns: Iterator of OVN HA_Chassis_Group rows
         """
-        try:
-            if not hasattr(self.ovn_nb_idl, 'tables'):
-                LOG.warning("OVN NB IDL not available")
-                return []
-
-            ha_groups = []
-            # Access IDL tables: tables['TableName'].rows.values()
-            if 'HA_Chassis_Group' in self.ovn_nb_idl.tables:
-                table = self.ovn_nb_idl.tables['HA_Chassis_Group']
-                for row in table.rows.values():
-                    ha_groups.append(row)
-
-            return ha_groups
-
-        except (AttributeError, KeyError):
-            LOG.exception("Failed to get ha_chassis_groups from OVN")
-            return []
+        # Access IDL tables: tables['TableName'].rows.values()
+        return self.ovn_nb_idl.tables['HA_Chassis_Group'].rows.values()
 
     def _discover_trunks(self):
         """Discover existing trunk ports for network nodes.
@@ -492,35 +472,26 @@ class L2VNITrunkManager:
         """
         chassis_physnets = set()
 
-        try:
-            # Get all chassis referenced in ha_chassis_groups
-            chassis_names = set()
-            for ha_group in self._get_ha_chassis_groups():
-                for ha_chassis in ha_group.ha_chassis:
-                    chassis_names.add(ha_chassis.chassis_name)
+        # Get all chassis referenced in ha_chassis_groups
+        chassis_names = set()
+        for ha_group in self._get_ha_chassis_groups():
+            for ha_chassis in ha_group.ha_chassis:
+                chassis_names.add(ha_chassis.chassis_name)
 
-            # Get physnets for each chassis
-            if not hasattr(self.ovn_sb_idl, 'tables'):
-                LOG.warning("OVN SB IDL not available")
-                return chassis_physnets
+        # Get physnets for each chassis
+        for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
+            if chassis.name not in chassis_names:
+                continue
 
-            if 'Chassis' in self.ovn_sb_idl.tables:
-                for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
-                    if chassis.name not in chassis_names:
-                        continue
+            # The chassis name IS the system-id (UUID)
+            system_id = chassis.name
 
-                    # The chassis name IS the system-id (UUID)
-                    system_id = chassis.name
+            bridge_mappings = chassis.other_config.get(
+                'ovn-bridge-mappings', '')
+            physnets = self._parse_bridge_mappings(bridge_mappings)
 
-                    bridge_mappings = chassis.other_config.get(
-                        'ovn-bridge-mappings', '')
-                    physnets = self._parse_bridge_mappings(bridge_mappings)
-
-                    for physnet in physnets:
-                        chassis_physnets.add((system_id, physnet))
-
-        except (AttributeError, KeyError):
-            LOG.exception("Failed to get chassis physnets")
+            for physnet in physnets:
+                chassis_physnets.add((system_id, physnet))
 
         return chassis_physnets
 
@@ -712,17 +683,9 @@ class L2VNITrunkManager:
             return self._chassis_cache.get(chassis_name)
 
         # Fallback to direct lookup (outside reconciliation)
-        try:
-            if not hasattr(self.ovn_sb_idl, 'tables'):
-                return None
-
-            if 'Chassis' in self.ovn_sb_idl.tables:
-                for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
-                    if chassis.name == chassis_name:
-                        return chassis
-
-        except (AttributeError, KeyError):
-            LOG.exception("Failed to get chassis %s", chassis_name)
+        for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
+            if chassis.name == chassis_name:
+                return chassis
 
         return None
 
@@ -732,20 +695,10 @@ class L2VNITrunkManager:
         :param ls_name: Logical switch name
         :returns: Logical_Switch row or None
         """
-        try:
-            if not hasattr(self.ovn_nb_idl, 'tables'):
-                return None
-
-            if 'Logical_Switch' not in self.ovn_nb_idl.tables:
-                return None
-
-            ls_table = self.ovn_nb_idl.tables['Logical_Switch']
-            for ls in ls_table.rows.values():
-                if ls.name == ls_name:
-                    return ls
-
-        except (AttributeError, KeyError):
-            LOG.exception("Failed to get logical switch %s", ls_name)
+        ls_table = self.ovn_nb_idl.tables['Logical_Switch']
+        for ls in ls_table.rows.values():
+            if ls.name == ls_name:
+                return ls
 
         return None
 
@@ -905,23 +858,18 @@ class L2VNITrunkManager:
         :param physnet: Physical network name
         :returns: bool
         """
-        try:
-            ls_name = ovn_utils.ovn_name(network_id)
-            target_ls = self._get_logical_switch_by_name(ls_name)
-            if not target_ls:
-                return False
+        ls_name = ovn_utils.ovn_name(network_id)
+        target_ls = self._get_logical_switch_by_name(ls_name)
+        if not target_ls:
+            return False
 
-            # Check if any port on this switch is a localnet for physnet
-            for lsp in target_ls.ports:
-                if lsp.type != 'localnet':
-                    continue
+        # Check if any port on this switch is a localnet for physnet
+        for lsp in target_ls.ports:
+            if lsp.type != 'localnet':
+                continue
 
-                if lsp.options.get('network_name') == physnet:
-                    return True
-
-        except (AttributeError, KeyError):
-            LOG.exception("Failed to check for localnet port on network %s.",
-                          network_id)
+            if lsp.options.get('network_name') == physnet:
+                return True
 
         return False
 
@@ -933,25 +881,14 @@ class L2VNITrunkManager:
         """
         chassis_set = set()
 
-        try:
-            if not hasattr(self.ovn_sb_idl, 'tables'):
-                return chassis_set
+        for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
+            bridge_mappings = chassis.other_config.get(
+                'ovn-bridge-mappings', '')
+            physnets = self._parse_bridge_mappings(bridge_mappings)
 
-            if 'Chassis' not in self.ovn_sb_idl.tables:
-                return chassis_set
-
-            for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
-                bridge_mappings = chassis.other_config.get(
-                    'ovn-bridge-mappings', '')
-                physnets = self._parse_bridge_mappings(bridge_mappings)
-
-                if physnet in physnets:
-                    # Chassis name IS the system-id
-                    chassis_set.add(chassis.name)
-
-        except (AttributeError, KeyError):
-            LOG.exception("Failed to get chassis with physnet %s",
-                          physnet)
+            if physnet in physnets:
+                # Chassis name IS the system-id
+                chassis_set.add(chassis.name)
 
         return chassis_set
 
@@ -964,37 +901,29 @@ class L2VNITrunkManager:
         """
         chassis_set = set()
 
-        try:
-            ls_name = ovn_utils.ovn_name(network_id)
-            target_ls = self._get_logical_switch_by_name(ls_name)
-            if not target_ls:
-                return chassis_set
+        ls_name = ovn_utils.ovn_name(network_id)
+        target_ls = self._get_logical_switch_by_name(ls_name)
+        if not target_ls:
+            return chassis_set
 
-            if 'Logical_Router_Port' not in self.ovn_nb_idl.tables:
-                return chassis_set
+        lrp_table = self.ovn_nb_idl.tables['Logical_Router_Port']
 
-            lrp_table = self.ovn_nb_idl.tables['Logical_Router_Port']
+        # Build set of router-port LRP names on this switch
+        # by iterating through the switch's ports once
+        router_lrp_names = set()
+        for lsp in target_ls.ports:
+            if lsp.type != 'router':
+                continue
 
-            # Build set of router-port LRP names on this switch
-            # by iterating through the switch's ports once
-            router_lrp_names = set()
-            for lsp in target_ls.ports:
-                if lsp.type != 'router':
-                    continue
+            router_port_name = lsp.options.get('router-port')
+            if router_port_name:
+                router_lrp_names.add(router_port_name)
 
-                router_port_name = lsp.options.get('router-port')
-                if router_port_name:
-                    router_lrp_names.add(router_port_name)
-
-            # Get chassis for each connected LRP
-            for lrp_name in router_lrp_names:
-                lrp = lrp_table.rows.get(lrp_name)
-                if lrp:
-                    chassis_set.update(self._get_chassis_for_lrp(lrp))
-
-        except (AttributeError, KeyError):
-            LOG.exception("Failed to get chassis for router ports on "
-                          "network %s", network_id)
+        # Get chassis for each connected LRP
+        for lrp_name in router_lrp_names:
+            lrp = lrp_table.rows.get(lrp_name)
+            if lrp:
+                chassis_set.update(self._get_chassis_for_lrp(lrp))
 
         return chassis_set
 
@@ -1006,30 +935,25 @@ class L2VNITrunkManager:
         """
         chassis_set = set()
 
-        try:
-            # Check ha_chassis_group (preferred)
-            # ha_chassis_group is a list with 0 or 1 element
-            if lrp.ha_chassis_group:
-                ha_group = lrp.ha_chassis_group[0]
-                for ha_chassis in ha_group.ha_chassis:
-                    chassis = self._get_chassis_by_name(
-                        ha_chassis.chassis_name)
-                    if chassis:
-                        # Chassis name IS the system-id
-                        chassis_set.add(chassis.name)
+        # Check ha_chassis_group (preferred)
+        # ha_chassis_group is a list with 0 or 1 element
+        if lrp.ha_chassis_group:
+            ha_group = lrp.ha_chassis_group[0]
+            for ha_chassis in ha_group.ha_chassis:
+                chassis = self._get_chassis_by_name(
+                    ha_chassis.chassis_name)
+                if chassis:
+                    # Chassis name IS the system-id
+                    chassis_set.add(chassis.name)
 
-            # Check legacy gateway_chassis
-            elif hasattr(lrp, 'gateway_chassis') and lrp.gateway_chassis:
-                for gw_chassis in lrp.gateway_chassis:
-                    chassis = self._get_chassis_by_name(
-                        gw_chassis.chassis_name)
-                    if chassis:
-                        # Chassis name IS the system-id
-                        chassis_set.add(chassis.name)
-
-        except (AttributeError, KeyError):
-            LOG.exception("Failed to get chassis for LRP %s",
-                          lrp.name)
+        # Check legacy gateway_chassis
+        elif hasattr(lrp, 'gateway_chassis') and lrp.gateway_chassis:
+            for gw_chassis in lrp.gateway_chassis:
+                chassis = self._get_chassis_by_name(
+                    gw_chassis.chassis_name)
+                if chassis:
+                    # Chassis name IS the system-id
+                    chassis_set.add(chassis.name)
 
         return chassis_set
 
@@ -1309,17 +1233,12 @@ class L2VNITrunkManager:
                   LLDP data found
         """
         try:
-            if not hasattr(self.ovn_sb_idl, 'tables'):
-                LOG.debug("OVN SB IDL not available for LLDP lookup")
-                return None
-
             # Find the chassis - chassis name IS the system-id
             chassis = None
-            if 'Chassis' in self.ovn_sb_idl.tables:
-                for c in self.ovn_sb_idl.tables['Chassis'].rows.values():
-                    if c.name == system_id:
-                        chassis = c
-                        break
+            for c in self.ovn_sb_idl.tables['Chassis'].rows.values():
+                if c.name == system_id:
+                    chassis = c
+                    break
 
             if not chassis:
                 return None
@@ -1341,51 +1260,50 @@ class L2VNITrunkManager:
             # Aggregate all ports on this chassis with LLDP for this bridge
             # Supports LAG/bonding with multiple ports to same bridge
             local_links = []
-            if 'Port' in self.ovn_sb_idl.tables:
-                for port in self.ovn_sb_idl.tables['Port'].rows.values():
-                    # Check if port belongs to this chassis
-                    if port.chassis != chassis:
+            for port in self.ovn_sb_idl.tables['Port'].rows.values():
+                # Check if port belongs to this chassis
+                if port.chassis != chassis:
+                    continue
+
+                # Check if this port is on the correct bridge
+                # Port.interfaces is a list of Interface objects
+                if not hasattr(port, 'interfaces') or not port.interfaces:
+                    continue
+
+                port_on_bridge = False
+                for iface in port.interfaces:
+                    # Interface.name typically matches the OVS interface
+                    # which should contain the bridge name for physical
+                    # interfaces (e.g., "br-physnet1", "eth0", etc.)
+                    if not hasattr(iface, 'name'):
                         continue
+                    iface_name = iface.name
+                    # Check if interface name matches or is on bridge
+                    if (iface_name == bridge_name
+                            or iface_name.startswith(bridge_name)):
+                        port_on_bridge = True
+                        break
 
-                    # Check if this port is on the correct bridge
-                    # Port.interfaces is a list of Interface objects
-                    if not hasattr(port, 'interfaces') or not port.interfaces:
-                        continue
+                if not port_on_bridge:
+                    continue
 
-                    port_on_bridge = False
-                    for iface in port.interfaces:
-                        # Interface.name typically matches the OVS interface
-                        # which should contain the bridge name for physical
-                        # interfaces (e.g., "br-physnet1", "eth0", etc.)
-                        if not hasattr(iface, 'name'):
-                            continue
-                        iface_name = iface.name
-                        # Check if interface name matches or is on bridge
-                        if (iface_name == bridge_name
-                                or iface_name.startswith(bridge_name)):
-                            port_on_bridge = True
-                            break
+                # Get LLDP data from external_ids
+                lldp = port.external_ids
+                chassis_id = lldp.get('lldp_chassis_id')
+                port_id = lldp.get('lldp_port_id')
+                system_name = lldp.get('lldp_system_name')
 
-                    if not port_on_bridge:
-                        continue
-
-                    # Get LLDP data from external_ids
-                    lldp = port.external_ids
-                    chassis_id = lldp.get('lldp_chassis_id')
-                    port_id = lldp.get('lldp_port_id')
-                    system_name = lldp.get('lldp_system_name')
-
-                    if chassis_id and port_id:
-                        LOG.debug("Found LLDP data for chassis %s physnet %s "
-                                  "bridge %s: switch_id=%s, port_id=%s, "
-                                  "switch_info=%s",
-                                  system_id, physnet, bridge_name, chassis_id,
-                                  port_id, system_name)
-                        local_links.append({
-                            'switch_id': chassis_id,
-                            'port_id': port_id,
-                            'switch_info': system_name or ''
-                        })
+                if chassis_id and port_id:
+                    LOG.debug("Found LLDP data for chassis %s physnet %s "
+                              "bridge %s: switch_id=%s, port_id=%s, "
+                              "switch_info=%s",
+                              system_id, physnet, bridge_name, chassis_id,
+                              port_id, system_name)
+                    local_links.append({
+                        'switch_id': chassis_id,
+                        'port_id': port_id,
+                        'switch_info': system_name or ''
+                    })
 
             if local_links:
                 LOG.info("Found %d link(s) from LLDP for chassis %s "
@@ -1636,18 +1554,9 @@ class L2VNITrunkManager:
         :param system_id: Chassis system-id (UUID)
         :returns: Hostname string or None
         """
-        try:
-            if not hasattr(self.ovn_sb_idl, 'tables'):
-                return None
-
-            if 'Chassis' not in self.ovn_sb_idl.tables:
-                return None
-
-            for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
-                if chassis.name == system_id and hasattr(chassis, 'hostname'):
-                    return chassis.hostname
-        except (AttributeError, KeyError):
-            LOG.debug("Failed to get hostname for chassis %s", system_id)
+        for chassis in self.ovn_sb_idl.tables['Chassis'].rows.values():
+            if chassis.name == system_id and hasattr(chassis, 'hostname'):
+                return chassis.hostname
 
         return None
 
