@@ -18,6 +18,7 @@ from neutron.tests import base as tests_base
 from neutron_lib import constants as n_const
 from openstack import exceptions as sdkexc
 from oslo_config import cfg
+from tooz import hashring
 
 from networking_baremetal.agent import agent_config
 from networking_baremetal.agent import l2vni_trunk_manager
@@ -1335,6 +1336,246 @@ network_nodes:
 
         # Should not delete network with L2VNI ports
         self.mock_neutron.network.delete_network.assert_not_called()
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_cleanup_unused_infrastructure', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_reconcile_subports', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_calculate_required_vlans', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_discover_trunks', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_infrastructure_networks', autospec=True)
+    def test_chassis_cache_built_during_reconcile(
+            self, mock_ensure_infra, mock_discover_trunks,
+            mock_calculate_vlans, mock_reconcile_subports, mock_cleanup):
+        """Test that chassis cache is built during reconciliation."""
+        # Setup chassis in OVN SB
+        chassis1 = FakeChassis('chassis-1', 'system-id-1')
+        chassis2 = FakeChassis('chassis-2', 'system-id-2')
+        self.mock_ovn_sb.tables['Chassis'].rows.values.return_value = [
+            chassis1, chassis2]
+
+        mock_discover_trunks.return_value = {}
+        mock_calculate_vlans.return_value = {}
+
+        # Cache should be None before reconcile
+        self.assertIsNone(self.manager._chassis_cache)
+
+        self.manager.reconcile()
+
+        # Cache should be None after reconcile (cleared)
+        self.assertIsNone(self.manager._chassis_cache)
+
+    def test_chassis_cache_used_during_reconcile(self):
+        """Test that chassis cache is actually used for lookups."""
+        # Note: FakeChassis uses system_id as the name (matches real OVN)
+        chassis1 = FakeChassis('chassis-1', 'system-id-1')
+        chassis2 = FakeChassis('chassis-2', 'system-id-2')
+
+        # Track how many times rows.values() is called
+        call_count = {'count': 0}
+        original_values = [chassis1, chassis2]
+
+        def track_calls():
+            call_count['count'] += 1
+            return original_values
+
+        self.mock_ovn_sb.tables['Chassis'].rows.values = track_calls
+
+        # Build cache - should call rows.values() once
+        self.manager._chassis_cache = self.manager._build_chassis_cache()
+        self.assertEqual(1, call_count['count'])
+
+        # Verify cache was built correctly (keyed by chassis.name)
+        self.assertEqual(2, len(self.manager._chassis_cache))
+        self.assertIn('system-id-1', self.manager._chassis_cache)
+        self.assertIn('system-id-2', self.manager._chassis_cache)
+
+        # Lookup should use cache (not call rows.values() again)
+        result = self.manager._get_chassis_by_name('system-id-1')
+        self.assertEqual(chassis1, result)
+        self.assertEqual(1, call_count['count'])  # Still 1, cache was used
+
+        # Another lookup should also use cache
+        result = self.manager._get_chassis_by_name('system-id-2')
+        self.assertEqual(chassis2, result)
+        self.assertEqual(1, call_count['count'])  # Still 1, cache was used
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_infrastructure_networks', autospec=True)
+    def test_chassis_cache_cleared_on_exception(self, mock_ensure_infra):
+        """Test that chassis cache is cleared even when exception occurs."""
+        chassis1 = FakeChassis('chassis-1', 'system-id-1')
+        self.mock_ovn_sb.tables['Chassis'].rows.values.return_value = [
+            chassis1]
+
+        # Mock _ensure_infrastructure_networks to raise exception
+        mock_ensure_infra.side_effect = Exception("Test error")
+
+        # Cache should be None before reconcile
+        self.assertIsNone(self.manager._chassis_cache)
+
+        # Reconcile should handle exception
+        with self.assertLogs(level='ERROR'):
+            self.manager.reconcile()
+
+        # Cache should still be cleared (finally block)
+        self.assertIsNone(self.manager._chassis_cache)
+
+    def test_chassis_lookup_fallback_without_cache(self):
+        """Test that chassis lookup works without cache (fallback)."""
+        # Note: FakeChassis uses system_id as the name (matches real OVN)
+        chassis1 = FakeChassis('chassis-1', 'system-id-1')
+        chassis2 = FakeChassis('chassis-2', 'system-id-2')
+        self.mock_ovn_sb.tables['Chassis'].rows.values.return_value = [
+            chassis1, chassis2]
+
+        # Ensure cache is None (not during reconciliation)
+        self.manager._chassis_cache = None
+
+        # Should fallback to direct OVN lookup using the actual name
+        result = self.manager._get_chassis_by_name('system-id-2')
+        self.assertEqual(chassis2, result)
+
+        # Non-existent chassis should return None
+        result = self.manager._get_chassis_by_name('non-existent')
+        self.assertIsNone(result)
+
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_all_chassis_with_physnet', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_vni_and_segment_for_network', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_get_subport_anchor_network_id', autospec=True)
+    @mock.patch.object(l2vni_trunk_manager.L2VNITrunkManager,
+                       '_ensure_infrastructure_networks', autospec=True)
+    def test_chassis_cache_built_during_reconcile_single_vlan(
+            self, mock_ensure_infra, mock_get_anchor, mock_get_vni,
+            mock_get_chassis):
+        """Test chassis cache built during single VLAN reconciliation."""
+        chassis1 = FakeChassis('chassis-1', 'system-id-1')
+        self.mock_ovn_sb.tables['Chassis'].rows.values.return_value = [
+            chassis1]
+
+        mock_get_anchor.return_value = 'anchor-net-id'
+        mock_get_vni.return_value = (1000, 'segment-id')
+        mock_get_chassis.return_value = set()
+
+        # Cache should be None before
+        self.assertIsNone(self.manager._chassis_cache)
+
+        self.manager.reconcile_single_vlan(
+            'net-id', 'physnet1', 100, action='add')
+
+        # Cache should be cleared after
+        self.assertIsNone(self.manager._chassis_cache)
+
+    def test_chassis_cache_filters_by_hash_ring(self):
+        """Test chassis cache only includes managed chassis via hash ring."""
+        # Create 5 chassis
+        chassis1 = FakeChassis('chassis-1', 'system-id-1')
+        chassis2 = FakeChassis('chassis-2', 'system-id-2')
+        chassis3 = FakeChassis('chassis-3', 'system-id-3')
+        chassis4 = FakeChassis('chassis-4', 'system-id-4')
+        chassis5 = FakeChassis('chassis-5', 'system-id-5')
+
+        self.mock_ovn_sb.tables['Chassis'].rows.values.return_value = [
+            chassis1, chassis2, chassis3, chassis4, chassis5]
+
+        # Setup hash ring with 3 agents
+        # This agent will only manage a subset of the chassis
+        mock_member_manager = mock.Mock()
+        mock_hashring = hashring.HashRing(['agent-1', 'agent-2', 'agent-3'])
+        mock_member_manager.hashring = mock_hashring
+
+        # Create manager with hash ring
+        manager_with_hashring = l2vni_trunk_manager.L2VNITrunkManager(
+            neutron_client=self.mock_neutron,
+            ovn_nb_idl=self.mock_ovn_nb,
+            ovn_sb_idl=self.mock_ovn_sb,
+            ironic_client=self.mock_ironic,
+            member_manager=mock_member_manager,
+            agent_id='agent-1'
+        )
+
+        # Build cache
+        cache = manager_with_hashring._build_chassis_cache()
+
+        # Cache should only contain chassis managed by agent-1
+        # Verify cache is smaller than total chassis count
+        self.assertLess(len(cache), 5)
+        self.assertGreater(len(cache), 0)
+
+        # Verify only managed chassis are in cache
+        for chassis_name in cache.keys():
+            # This chassis should be managed by agent-1
+            self.assertTrue(
+                manager_with_hashring._should_manage_chassis(chassis_name))
+
+        # Verify non-cached chassis are NOT managed by agent-1
+        all_chassis_names = {'system-id-1', 'system-id-2', 'system-id-3',
+                             'system-id-4', 'system-id-5'}
+        non_cached_names = all_chassis_names - set(cache.keys())
+        for chassis_name in non_cached_names:
+            # These chassis should NOT be managed by agent-1
+            self.assertFalse(
+                manager_with_hashring._should_manage_chassis(chassis_name))
+
+    def test_chassis_cache_filters_with_two_agents(self):
+        """Test chassis cache filtering with deterministic 2-agent setup."""
+        # Create 4 chassis
+        chassis1 = FakeChassis('chassis-1', 'system-id-1')
+        chassis2 = FakeChassis('chassis-2', 'system-id-2')
+        chassis3 = FakeChassis('chassis-3', 'system-id-3')
+        chassis4 = FakeChassis('chassis-4', 'system-id-4')
+
+        self.mock_ovn_sb.tables['Chassis'].rows.values.return_value = [
+            chassis1, chassis2, chassis3, chassis4]
+
+        # Setup hash ring with 2 agents
+        mock_member_manager = mock.Mock()
+        mock_hashring = hashring.HashRing(['agent-1', 'agent-2'])
+        mock_member_manager.hashring = mock_hashring
+
+        # Create manager for agent-1
+        manager_agent1 = l2vni_trunk_manager.L2VNITrunkManager(
+            neutron_client=self.mock_neutron,
+            ovn_nb_idl=self.mock_ovn_nb,
+            ovn_sb_idl=self.mock_ovn_sb,
+            ironic_client=self.mock_ironic,
+            member_manager=mock_member_manager,
+            agent_id='agent-1'
+        )
+
+        # Build cache for agent-1
+        cache_agent1 = manager_agent1._build_chassis_cache()
+
+        # With 2 agents and 4 chassis, each agent should manage ~2 chassis
+        self.assertGreater(len(cache_agent1), 0)
+        self.assertLess(len(cache_agent1), 4)
+
+        # Create manager for agent-2
+        manager_agent2 = l2vni_trunk_manager.L2VNITrunkManager(
+            neutron_client=self.mock_neutron,
+            ovn_nb_idl=self.mock_ovn_nb,
+            ovn_sb_idl=self.mock_ovn_sb,
+            ironic_client=self.mock_ironic,
+            member_manager=mock_member_manager,
+            agent_id='agent-2'
+        )
+
+        # Build cache for agent-2
+        cache_agent2 = manager_agent2._build_chassis_cache()
+
+        # Verify caches don't overlap (each agent manages different chassis)
+        agent1_chassis = set(cache_agent1.keys())
+        agent2_chassis = set(cache_agent2.keys())
+        self.assertEqual(set(), agent1_chassis & agent2_chassis)
+
+        # Together they should cover all chassis
+        self.assertEqual(4, len(agent1_chassis | agent2_chassis))
 
 
 class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
