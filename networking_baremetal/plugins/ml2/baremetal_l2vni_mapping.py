@@ -14,7 +14,6 @@
 #    under the License.
 
 import functools
-import socket
 from typing import cast
 
 from neutron.common.ovn import constants as ovn_const
@@ -127,66 +126,6 @@ class L2vniMechanismDriver(api.MechanismDriver):
             LOG.error("Failed to get OVN client: %s", e)
             return None
 
-    def _get_local_chassis_name(self, ovn_client):
-        """Get the local OVN chassis name.
-
-        :param ovn_client: OVN client instance
-        :returns: Chassis name string or None
-        """
-        try:
-            # Try to get from OVN mech driver
-            if hasattr(ovn_client, 'chassis'):
-                return ovn_client.chassis
-
-            # Try to get from config
-            if hasattr(cfg.CONF, 'ovn') and hasattr(cfg.CONF.ovn,
-                                                    'ovn_chassis_name'):
-                return cfg.CONF.ovn.ovn_chassis_name
-
-            # Fall back to hostname
-            hostname = socket.gethostname()
-            LOG.debug("Using hostname as chassis name: %s", hostname)
-            return hostname
-
-        except Exception as e:
-            LOG.error("Failed to determine local chassis name: %s", e)
-            return None
-
-    def _get_local_chassis(self, ovn_client):
-        """Get the local OVN chassis object.
-
-        :param ovn_client: OVN client instance
-        :returns: Chassis object or None
-        """
-        try:
-            local_chassis_name = self._get_local_chassis_name(ovn_client)
-            if not local_chassis_name:
-                return None
-
-            # Get chassis from OVN Southbound
-            if not hasattr(ovn_client, '_sb_idl'):
-                LOG.debug("No southbound connection available")
-                return None
-
-            # TODO(TheJulia): At some point soon, once we have a CI job
-            # validating all of this, we should look at a different query
-            # pattern. See:
-            # https://review.opendev.org/c/openstack/networking-baremetal/+/973889/9/networking_baremetal/plugins/ml2/baremetal_l2vni_mapping.py
-
-            # Query chassis from Southbound database
-            for ch in ovn_client._sb_idl.tables['Chassis'].rows.values():
-                if ch.name == local_chassis_name or \
-                   ch.hostname == local_chassis_name:
-                    return ch
-
-            LOG.warning("Local chassis %s not found in OVN",
-                        local_chassis_name)
-            return None
-
-        except Exception as e:
-            LOG.error("Error getting local chassis: %s", e)
-            return None
-
     def _chassis_can_forward_physnet(self, ovn_client, physnet):
         """Check if any chassis in the cluster can forward for this physnet.
 
@@ -276,9 +215,6 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 'Logical_Switch_Port', port_name, default=None)
 
             if existing_port:
-                # Get local chassis name for validation
-                chassis_name = self._get_local_chassis_name(ovn_client)
-
                 # Verify the VLAN tag matches - it may have changed if the
                 # segment was released and a new one allocated
                 existing_tag = existing_port.tag if hasattr(
@@ -287,44 +223,18 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 if isinstance(existing_tag, list):
                     existing_tag = existing_tag[0] if existing_tag else None
 
-                # Verify requested-chassis matches
-                existing_options = existing_port.options if hasattr(
-                    existing_port, 'options') else {}
-                if isinstance(existing_options, list):
-                    existing_options = {k: v for k, v in existing_options}
-                elif not isinstance(existing_options, dict):
-                    existing_options = {}
-                existing_chassis = existing_options.get('requested-chassis')
-
-                tag_mismatch = existing_tag != vlan_id
-                chassis_mismatch = (chassis_name
-                                    and existing_chassis != chassis_name)
-
-                if not tag_mismatch and not chassis_mismatch:
+                if existing_tag == vlan_id:
                     LOG.debug("Localnet port %s already exists for network "
-                              "%s on physnet %s with correct VLAN tag %s "
-                              "and chassis %s",
-                              port_name, network_id, physnet, vlan_id,
-                              chassis_name)
+                              "%s on physnet %s with correct VLAN tag %s",
+                              port_name, network_id, physnet, vlan_id)
                     return
-                else:
-                    # VLAN tag or chassis mismatch - delete and recreate
-                    if tag_mismatch and chassis_mismatch:
-                        LOG.warning("Localnet port %s exists with stale "
-                                    "VLAN tag %s (expected %s) and "
-                                    "chassis %s (expected %s), recreating",
-                                    port_name, existing_tag, vlan_id,
-                                    existing_chassis, chassis_name)
-                    elif tag_mismatch:
-                        LOG.warning("Localnet port %s exists with stale "
-                                    "VLAN tag %s (expected %s), recreating",
-                                    port_name, existing_tag, vlan_id)
-                    else:
-                        LOG.warning("Localnet port %s exists with stale "
-                                    "chassis %s (expected %s), recreating",
-                                    port_name, existing_chassis, chassis_name)
-                    ovn_client._nb_idl.lsp_del(port_name).execute(
-                        check_error=True)
+
+                # VLAN tag mismatch - delete and recreate
+                LOG.warning("Localnet port %s exists with stale "
+                            "VLAN tag %s (expected %s), recreating",
+                            port_name, existing_tag, vlan_id)
+                ovn_client._nb_idl.lsp_del(port_name).execute(
+                    check_error=True)
 
             # Create the localnet port using atomic create_lswitch_port
             LOG.info("Creating localnet port %s for network %s to bridge "
@@ -339,16 +249,6 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 ovn_const.LSP_OPTIONS_MCAST_FLOOD_REPORTS: 'true',
             }
 
-            # Get the local chassis name to pin the localnet port
-            # This ensures the localnet port stays on the same chassis,
-            # preventing disjointed behavior. Similar to trunk reconciler
-            # approach in:
-            # https://review.opendev.org/c/openstack/networking-baremetal/+/975333  # noqa: E501
-            chassis_name = self._get_local_chassis_name(ovn_client)
-            if not chassis_name:
-                LOG.warning("Cannot determine local chassis name, "
-                            "localnet port will not be chassis-pinned")
-
             # Create localnet port atomically
             cmd = ovn_client._nb_idl.create_lswitch_port(
                 lport_name=port_name,
@@ -360,17 +260,7 @@ class L2vniMechanismDriver(api.MechanismDriver):
                 options=options,
                 enabled=True
             )
-
-            # Pin localnet port to local chassis if we have a chassis name
-            if chassis_name:
-                cmd_set_options = ovn_client._nb_idl.db_set(
-                    'Logical_Switch_Port', port_name,
-                    ('options', {'requested-chassis': chassis_name,
-                                 **options})
-                )
-                ovn_client._transaction([cmd, cmd_set_options])
-            else:
-                ovn_client._transaction([cmd])
+            ovn_client._transaction([cmd])
 
             LOG.info("Successfully created localnet port %s with VLAN tag %s",
                      port_name, vlan_id)
