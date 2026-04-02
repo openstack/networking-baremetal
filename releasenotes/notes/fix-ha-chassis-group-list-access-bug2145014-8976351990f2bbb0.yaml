@@ -1,0 +1,11 @@
+---
+fixes:
+  - |
+    Fixed AttributeError in L2VNI trunk manager when accessing
+    ``ha_chassis_group`` on logical router ports. The code was incorrectly
+    treating ``ha_chassis_group`` as a single object when it is actually a
+    list (with 0 or 1 element) in the OVN IDL schema. The fix now properly
+    accesses ``ha_chassis_group[0]`` to get the HA_Chassis_Group object
+    before iterating over its chassis members, matching the pattern used
+    throughout the upstream Neutron codebase. See
+    `bug 2145014 <https://bugs.launchpad.net/networking-baremetal/+bug/2145014>`_.
