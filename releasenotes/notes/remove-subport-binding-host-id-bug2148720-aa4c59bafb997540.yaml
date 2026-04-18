@@ -1,0 +1,7 @@
+---
+fixes:
+  - |
+    Fixed L2VNI trunk subport creation to avoid ML2 ERROR log spam. Previously,
+    setting ``binding:host_id`` on subports before adding them to trunks caused
+    unnecessary binding attempts that would fail. See `bug 2148720
+    <https://bugs.launchpad.net/networking-baremetal/+bug/2148720>`_.
