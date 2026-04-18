@@ -1048,12 +1048,6 @@ class L2VNITrunkManager:
         """
         port_name = _get_subport_name(system_id, physnet, vlan_id)
 
-        # Get chassis hostname for binding
-        hostname = self._get_chassis_hostname(system_id)
-        if not hostname:
-            LOG.warning("Could not determine hostname for chassis %s. "
-                        "Subport will not be bound.", system_id)
-
         try:
             # Create port
             LOG.debug("Creating subport %s for trunk %s (segment: %s, "
@@ -1076,15 +1070,6 @@ class L2VNITrunkManager:
                 binding_vnic_type='baremetal',
                 binding_profile=binding_profile
             )
-
-            # Set binding:host_id on subport if we have a hostname
-            if hostname:
-                self.neutron.network.update_port(
-                    port.id,
-                    **{'binding:host_id': hostname}
-                )
-                LOG.debug("Set binding:host_id=%s for subport %s",
-                          hostname, port.id)
 
             # Add as subport
             self.neutron.network.add_trunk_subports(

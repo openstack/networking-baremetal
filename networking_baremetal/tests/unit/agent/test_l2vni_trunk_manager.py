@@ -1977,19 +1977,14 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         self.assertEqual([local_link],
                          updated_profile['local_link_information'])
 
-    def test_subport_creation_sets_binding_host_id(self):
-        """Test subport creation sets binding:host_id to chassis hostname."""
+    def test_subport_creation(self):
+        """Test subport creation."""
         trunk_id = 'trunk-id'
         system_id = 'system-1'
         physnet = 'physnet1'
         vlan_id = 100
         anchor_network_id = 'anchor-net-id'
         segment_id = 'segment-id-1'
-
-        # Setup chassis with hostname
-        chassis = FakeChassis('chassis-1', system_id, hostname='devstack')
-        self.mock_ovn_sb.tables['Chassis'].rows.values\
-            .return_value = [chassis]
 
         # Mock port creation
         created_port = FakePort('subport-id',
@@ -1999,40 +1994,9 @@ class TestL2VNITrunkManagerEdgeCases(tests_base.BaseTestCase):
         self.manager._add_subport(trunk_id, system_id, physnet, vlan_id,
                                   anchor_network_id, segment_id)
 
-        # Should create port and set binding:host_id
+        # Should create port and add to trunk
         self.mock_neutron.network.create_port.assert_called_once()
-        self.mock_neutron.network.update_port.assert_called_once()
-
-        # Check update_port was called with binding:host_id
-        update_call = self.mock_neutron.network.update_port.call_args
-        self.assertEqual('subport-id', update_call[0][0])
-        self.assertIn('binding:host_id', update_call[1])
-        self.assertEqual('devstack', update_call[1]['binding:host_id'])
-
-    def test_subport_creation_without_hostname(self):
-        """Test subport creation when hostname cannot be determined."""
-        trunk_id = 'trunk-id'
-        system_id = 'system-1'
-        physnet = 'physnet1'
-        vlan_id = 100
-        anchor_network_id = 'anchor-net-id'
-        segment_id = 'segment-id-1'
-
-        # Mock empty chassis table (hostname lookup fails)
-        self.mock_ovn_sb.tables['Chassis'].rows.values.return_value = []
-
-        # Mock port creation
-        created_port = FakePort('subport-id',
-                                l2vni_trunk_manager.DEVICE_OWNER_L2VNI_SUBPORT)
-        self.mock_neutron.network.create_port.return_value = created_port
-
-        self.manager._add_subport(trunk_id, system_id, physnet, vlan_id,
-                                  anchor_network_id, segment_id)
-
-        # Should create port but NOT call update_port (no hostname)
-        self.mock_neutron.network.create_port.assert_called_once()
-        # update_port should not be called since we have no hostname
-        self.mock_neutron.network.update_port.assert_not_called()
+        self.mock_neutron.network.add_trunk_subports.assert_called_once()
 
     def test_get_vni_and_segment_for_network_with_both(self):
         """Test _get_vni_and_segment_for_network returns both values."""
