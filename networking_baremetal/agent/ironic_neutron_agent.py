@@ -65,6 +65,13 @@ def list_opts():
 
 def _get_notification_transport_url():
     url = urlparse.urlparse(CONF.transport_url)
+    # The amqp_auto_delete tweak is only relevant for rabbit transports.
+    # When using a non-rabbit driver, the oslo_messaging_rabbit config group
+    # may not be registered, so accessing it would raise NoSuchOptError.
+    # Return None to let get_notification_transport() use the default
+    # transport_url without rabbit-specific query parameter munging.
+    if url.scheme not in ('rabbit', 'amqp'):
+        return None
     if (CONF.oslo_messaging_rabbit.amqp_auto_delete is False
             and not getattr(CONF.oslo_messaging_rabbit, 'rabbit_quorum_queue',
                             None)):
