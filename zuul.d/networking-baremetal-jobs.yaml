@@ -152,7 +152,6 @@
         ovs-vswitchd: True
         ovsdb-server: True
         q-ovn-agent: True
-        q-ovn-metadata-agent: True
         # Service names from ironic-base
         q-svc: True
         q-agt: False
