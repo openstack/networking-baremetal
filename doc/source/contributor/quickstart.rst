@@ -35,15 +35,8 @@ networking-baremetal with ironic. Here is an example of local.conf::
     enable_plugin ironic https://opendev.org/openstack/ironic
     enable_service networking_baremetal
 
-    # Enable neutron which is required by ironic and disable nova-network.
-    disable_service n-net
+    # Disable novnc
     disable_service n-novnc
-    enable_service q-svc
-    enable_service q-agt
-    enable_service q-dhcp
-    enable_service q-l3
-    enable_service q-meta
-    enable_service neutron
 
     # Enable swift for agent_* drivers
     enable_service s-proxy
@@ -53,9 +46,6 @@ networking-baremetal with ironic. Here is an example of local.conf::
 
     # Disable horizon
     disable_service horizon
-
-    # Disable heat
-    disable_service heat h-api h-api-cfn h-api-cw h-eng
 
     # Disable cinder
     disable_service cinder c-sch c-api c-vol
