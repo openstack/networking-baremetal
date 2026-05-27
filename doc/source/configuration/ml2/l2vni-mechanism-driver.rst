@@ -43,6 +43,15 @@ The L2VNI mechanism driver operates as follows:
     │   Server     │
     └──────┬───────┘
            │ VLAN 100
+    ┌──────▼───────┐
+    │   Physical   │
+    │   Switch     │
+    └──────┬───────┘
+           │
+    ┌──────▼────────────────┐
+    │  VXLAN Network Fabric │
+    │  (Optional)           │
+    └──────┬────────────────┘
            │
     ┌──────▼───────┐
     │   Physical   │
