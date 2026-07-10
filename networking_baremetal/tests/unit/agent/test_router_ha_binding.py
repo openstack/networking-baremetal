@@ -56,6 +56,21 @@ class FakeHAChassisGroup:
         self.external_ids = external_ids or {}
 
 
+class FakeLogicalSwitchPort:
+    """Fake OVN Logical_Switch_Port object."""
+
+    def __init__(self, name, port_type=''):
+        self.name = name
+        self.type = port_type
+
+
+class FakeLogicalSwitch:
+    """Fake OVN Logical_Switch object."""
+
+    def __init__(self, ports=None):
+        self.ports = ports or []
+
+
 class TestRouterHABindingManager(tests_base.BaseTestCase):
     """Test cases for RouterHABindingManager."""
 
@@ -84,12 +99,75 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
             agent_id=self.agent_id
         )
 
+        # By default, assume the network has external ports so that
+        # existing tests (which pre-date the external-ports check) keep
+        # exercising the rest of the binding/reconcile logic unchanged.
+        # Tests for the external-ports check itself override this.
+        has_ext_patcher = mock.patch.object(
+            self.manager, '_network_has_external_ports',
+            autospec=True, return_value=True)
+        self.mock_has_external_ports = has_ext_patcher.start()
+        self.addCleanup(has_ext_patcher.stop)
+
     def test_initialize(self):
         """Test manager initialization."""
         self.assertEqual(self.manager.neutron_client, self.mock_neutron)
         self.assertEqual(self.manager.ovn_nb_idl, self.mock_ovn_nb)
         self.assertEqual(self.manager.member_manager, self.mock_member_manager)
         self.assertEqual(self.manager.agent_id, self.agent_id)
+
+    def _new_manager(self):
+        """Return a fresh manager instance without the default gating mock.
+
+        Tests for ``_network_has_external_ports`` itself must exercise the
+        real implementation, not the ``setUp()``-installed mock.
+        """
+        return router_ha_binding.RouterHABindingManager(
+            neutron_client=self.mock_neutron,
+            ovn_nb_idl=self.mock_ovn_nb,
+            member_manager=self.mock_member_manager,
+            agent_id=self.agent_id)
+
+    def test_network_has_external_ports_true(self):
+        """Test _network_has_external_ports detects an external port."""
+        network_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        normal_port = FakeLogicalSwitchPort('normal-port', port_type='')
+        ext_port = FakeLogicalSwitchPort('ext-port', port_type='external')
+        self.mock_ovn_nb.lookup.return_value = FakeLogicalSwitch(
+            ports=[normal_port, ext_port])
+
+        result = self._new_manager()._network_has_external_ports(network_id)
+
+        self.assertTrue(result)
+
+    def test_network_has_external_ports_false_only_regular_ports(self):
+        """Test _network_has_external_ports with only regular ports."""
+        network_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        normal_port = FakeLogicalSwitchPort('normal-port', port_type='')
+        self.mock_ovn_nb.lookup.return_value = FakeLogicalSwitch(
+            ports=[normal_port])
+
+        result = self._new_manager()._network_has_external_ports(network_id)
+
+        self.assertFalse(result)
+
+    def test_network_has_external_ports_false_no_ports(self):
+        """Test _network_has_external_ports with no ports at all."""
+        network_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        self.mock_ovn_nb.lookup.return_value = FakeLogicalSwitch(ports=[])
+
+        result = self._new_manager()._network_has_external_ports(network_id)
+
+        self.assertFalse(result)
+
+    def test_network_has_external_ports_false_no_logical_switch(self):
+        """Test _network_has_external_ports when logical switch missing."""
+        network_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        self.mock_ovn_nb.lookup.return_value = None
+
+        result = self._new_manager()._network_has_external_ports(network_id)
+
+        self.assertFalse(result)
 
     def test_should_manage_network_owned_by_agent(self):
         """Test _should_manage_network returns True for owned network."""
@@ -399,6 +477,24 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
 
                     mock_bind.assert_not_called()
 
+    def test_bind_router_interfaces_for_network_no_external_ports(self):
+        """Test bind_router_interfaces_for_network skips w/o ext. ports."""
+        network_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        ha_chassis_group = 'ha-group-1'
+
+        self.mock_has_external_ports.return_value = False
+
+        with mock.patch.object(
+                self.manager, '_should_manage_network',
+                autospec=True, return_value=True):
+            with mock.patch.object(
+                    self.manager, '_get_router_interface_ports',
+                    autospec=True) as mock_get_ports:
+                self.manager.bind_router_interfaces_for_network(
+                    network_id, ha_chassis_group)
+
+                mock_get_ports.assert_not_called()
+
     def test_bind_router_interfaces_for_network_handles_port_bind_error(
             self):
         """Test handles port bind errors."""
@@ -635,6 +731,44 @@ class TestRouterHABindingManager(tests_base.BaseTestCase):
                         self.manager.reconcile()
 
                         mock_update.assert_not_called()
+
+    def test_reconcile_skips_networks_without_external_ports(self):
+        """Test reconcile skips networks without external ports."""
+        network1_id = 'network-1'
+        network2_id = 'network-2'
+        ha_group1 = 'ha-group-1'
+        ha_group2 = 'ha-group-2'
+
+        # Only network1 has external ports.
+        self.mock_has_external_ports.side_effect = (
+            lambda nid: nid == network1_id)
+
+        port1 = FakePort('port-1')
+
+        with mock.patch.object(
+                self.manager, '_get_networks_with_ha_chassis_groups',
+                autospec=True,
+                return_value={network1_id: ha_group1,
+                              network2_id: ha_group2}):
+            with mock.patch.object(
+                    self.manager, '_should_manage_network',
+                    autospec=True, return_value=True):
+                with mock.patch.object(
+                        self.manager, '_get_router_interface_ports',
+                        autospec=True,
+                        return_value=[port1]) as mock_get_ports:
+                    with mock.patch.object(
+                            self.manager,
+                            '_update_lrp_ha_chassis_group',
+                            autospec=True, return_value=True) as mock_update:
+                        self.manager.reconcile()
+
+                        # Only network1's router port should be reconciled;
+                        # network2 is skipped entirely (no external ports),
+                        # so its router ports are never even queried.
+                        mock_get_ports.assert_called_once_with(network1_id)
+                        mock_update.assert_called_once_with(
+                            'port-1', ha_group1, network1_id)
 
     def test_reconcile_handles_port_update_errors(self):
         """Test reconcile continues after port update errors."""

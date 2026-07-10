@@ -1,0 +1,15 @@
+---
+fixes:
+  - |
+    Fixed an issue in the router HA binding manager (``enable_router_ha_binding``,
+    default enabled) where router interface ports (``Logical_Router_Port``)
+    on networks with **no** external (baremetal/SR-IOV) ports were still
+    being bound to that network's ``HA_Chassis_Group``. This pinned the
+    router's east-west traffic to a single chassis, breaking basic
+    default-gateway reachability and Distributed Floating IP traffic for
+    regular VMs hosted on any chassis other than the one referenced by the
+    ``HA_Chassis_Group``, in Neutron OVN deployments using
+    ``enable_distributed_floating_ip``. Router interface ports are now only
+    bound to a network's ``HA_Chassis_Group`` when that network actually
+    contains at least one external port. See
+    `bug 2160270 <https://bugs.launchpad.net/networking-baremetal/+bug/2160270>`_.
