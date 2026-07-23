@@ -1,0 +1,18 @@
+---
+fixes:
+  - |
+    The ironic-neutron-agent notification listener pool name now uses the
+    agent hostname instead of a per-process UUID. Previously, each agent
+    restart created a new permanent RabbitMQ queue named after the UUID,
+    leaving behind stale queues with unconsumed messages when
+    running with quorum queues (``rabbit_quorum_queue = True``). With
+    quorum queues, ``auto_delete`` is not supported, so old UUID-named
+    queues were never removed. Using the hostname as the pool name ensures
+    the same queue is reused across restarts on the same host.
+upgrade:
+  - |
+    Deployments that have been running the ironic-neutron-agent with
+    quorum queues (``rabbit_quorum_queue = True``) may have stale
+    RabbitMQ queues named
+    ``ironic-neutron-agent-member-manager.<hostname>.ironic-neutron-agent-member-manager-pool-<uuid>``.
+    These queues can be safely deleted manually after upgrading.

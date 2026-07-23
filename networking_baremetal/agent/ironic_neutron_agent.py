@@ -159,7 +159,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
         # See bug: https://bugs.launchpad.net/oslo.messaging/+bug/1814544
         self.listener = _set_up_listener(self.transport, None)
         self.pool_listener = _set_up_listener(self.transport, '-'.join(
-            ['ironic-neutron-agent-member-manager-pool', self.agent_id]))
+            ['ironic-neutron-agent-member-manager-pool', self.agent_host]))
 
         self.member_manager = HashRingMemberManagerNotificationEndpoint()
 
