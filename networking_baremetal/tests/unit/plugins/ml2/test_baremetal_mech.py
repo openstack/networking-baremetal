@@ -13,6 +13,9 @@
 #    under the License.
 
 
+import os
+import shutil
+import tempfile
 from unittest import mock
 
 from neutron.db import provisioning_blocks
@@ -21,6 +24,7 @@ from neutron.tests.unit.plugins.ml2 import _test_mech_agent as base
 from neutron_lib.api.definitions import portbindings
 from neutron_lib import constants as n_const
 from neutron_lib.plugins.ml2 import api
+from oslo_config import cfg
 from oslo_config import fixture as config_fixture
 
 from networking_baremetal import common
@@ -735,3 +739,62 @@ class TestGetDevices(base.AgentMechanismBaseTestCase):
                      'switch_id': 'aa:bb:cc:dd:ee:02'})
 
         self.assertEqual({'aa:bb:cc:dd:ee:02': 'working'}, devices)
+
+
+class TestValidateDeviceOptions(base.AgentMechanismBaseTestCase):
+    """Tests for checking device option values at startup.
+
+    oslo.config only converts a value when it is first read, so without an
+    explicit pass a bad value is not noticed until the driver uses that
+    option, which for most device options is while binding a port.
+
+    Values are supplied through a configuration file rather than an
+    override, because an override is validated as it is set and so could
+    never carry the malformed value this is meant to catch.
+    """
+
+    DEVICE_OPTS = [
+        cfg.BoolOpt('manage_lacp_aggregates', default=True),
+        cfg.ListOpt('disabled_properties',
+                    item_type=cfg.types.String(choices=['port_mtu']),
+                    default=[]),
+    ]
+
+    def setUp(self):
+        super(TestValidateDeviceOptions, self).setUp()
+        self.conf = self.useFixture(config_fixture.Config())
+        self.conf.register_opts(config._device_opts + self.DEVICE_OPTS,
+                                group='sw1')
+
+    def _load(self, *device_lines):
+        config_dir = tempfile.mkdtemp('-nb')
+        self.addCleanup(shutil.rmtree, config_dir, True)
+        path = os.path.join(config_dir, 'nb.conf')
+        with open(path, 'w') as f:
+            f.write('[networking_baremetal]\n'
+                    'enabled_devices = sw1\n'
+                    '\n'
+                    '[sw1]\n'
+                    'driver = netconf-openconfig\n'
+                    'switch_id = aa:bb:cc:dd:ee:01\n')
+            f.write('\n'.join(device_lines) + '\n')
+        self.conf.conf(args=['--config-file', path])
+
+    def test_valid_options(self):
+        self._load('manage_lacp_aggregates = false',
+                   'disabled_properties = port_mtu')
+
+        config.validate_device_options('sw1')
+
+    def test_invalid_options_are_reported(self):
+        # All of a device's problems are named at once, rather than one per
+        # restart, and options that are fine are left out of the report.
+        self._load('manage_lacp_aggregates = perhaps',
+                   'disabled_properties = not_a_valid_choice')
+
+        e = self.assertRaises(exceptions.DriverValidationError,
+                              config.validate_device_options, 'sw1')
+        self.assertIn('sw1', str(e))
+        self.assertIn('manage_lacp_aggregates', str(e))
+        self.assertIn('disabled_properties', str(e))
+        self.assertNotIn('switch_id', str(e))

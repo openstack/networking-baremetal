@@ -50,6 +50,7 @@ class BaremetalMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
             device_driver = common.driver_mgr(device_id)
             device_driver.load_config()
             try:
+                config.validate_device_options(device_id)
                 device_driver.validate()
             except exceptions.DriverValidationError:
                 LOG.exception("Failed to validate device driver %s",

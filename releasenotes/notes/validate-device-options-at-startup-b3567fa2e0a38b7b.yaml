@@ -1,0 +1,12 @@
+---
+fixes:
+  - |
+    Device option values are now checked when the mechanism driver starts,
+    rather than when the driver first reads each option. oslo.config converts
+    and validates a value on first access, not when the configuration is
+    parsed, so a malformed value in a device section previously went unnoticed
+    until a port was bound or a network created, and surfaced there as a
+    ``ConfigFileValueError``. Values such as ``manage_lacp_aggregates =
+    perhaps`` or an unrecognised entry in ``disabled_properties`` are now
+    reported at startup, and all of a device's invalid options are reported
+    together.
