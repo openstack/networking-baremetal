@@ -263,6 +263,14 @@ instead of parsing switch port configurations, allowing static trunk port
 configurations. The VNI enables complete VLAN-to-VNI mappings on physical
 switches for EVPN/VXLAN bridging.
 
+.. note::
+   The VNI in the subport binding profile is the far (network-node) end of
+   the switch-to-switch VXLAN segment described in
+   :doc:`/configuration/ml2/l2vni-mechanism-driver` (see its "Deployment
+   Models" section). Both the baremetal-facing leaf and the network-node
+   leaf map their own local VLAN to this *same* VNI, and the fabric carries
+   the VXLAN tunnel between them.
+
 Note: ML2 mechanism drivers use the parent port's (anchor port's)
 local_link_information when configuring the physical switch, so subports do
 not need local_link_information in their binding profile.
