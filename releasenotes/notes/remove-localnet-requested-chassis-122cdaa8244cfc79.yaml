@@ -1,0 +1,6 @@
+---
+fixes:
+  - |
+    Fixes an issue where the driver attempted to set ``requested-chassis``
+    on localnet ports, which is not a valid option for this port type.
+    See `bug 2145148 <https://bugs.launchpad.net/networking-baremetal/+bug/2145148>`_.
