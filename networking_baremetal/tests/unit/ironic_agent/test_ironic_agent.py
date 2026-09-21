@@ -61,6 +61,18 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                          enable_ha_chassis_group_alignment=False,
                          enable_router_ha_binding=False)
 
+    def test_pool_listener_name_uses_conf_host(self, mock_conn,
+                                               mock_ir_client):
+        self.conf.config(host='stable-host')
+        with mock.patch.object(ironic_neutron_agent, '_set_up_listener',
+                               autospec=True) as mock_listener:
+            agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        self.assertEqual('stable-host', agent.agent_host)
+        self.assertIn(
+            mock.call(mock.ANY,
+                      'ironic-neutron-agent-member-manager-pool-stable-host'),
+            mock_listener.call_args_list)
+
     def test_get_template_node_state(self, mock_conn, mock_ir_client):
         self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
         # Verify agent binary
