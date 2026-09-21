@@ -13,8 +13,175 @@ physical network infrastructure.
 This driver is essential for deployments where baremetal nodes need to
 participate in tenant overlay networks alongside virtual machines.
 
+User Workflow
+=============
+
+This document is written for the operator deploying and configuring the
+driver. The end user of the resulting capability is typically a *tenant*
+following a self-service workflow: the tenant creates a VXLAN or Geneve
+overlay network, then attaches a baremetal instance to it. Ironic and Nova
+set the ``vnic-type`` and populate the binding profile on the tenant's
+behalf, which is what triggers this driver — the tenant does not create
+ports or supply binding profiles manually.
+
+The tenant-facing workflow is documented in Ironic and is not duplicated
+here:
+
+* Ironic VXLAN administration guide — connectivity models, network
+  creation, and attaching baremetal nodes:
+  https://docs.openstack.org/ironic/latest/admin/vxlan.html
+* Ironic deploy / user guide — the overall deploy workflow:
+  https://docs.openstack.org/ironic/latest/user/deploy.html
+
+The manual ``openstack port create`` steps shown later in this document are a
+demonstration and troubleshooting aid for exercising the binding logic
+directly; they are not part of the normal tenant workflow.
+
+Deployment Models
+=================
+
+The overlay VNI can reach a baremetal server in two ways, distinguished by
+*which device terminates the VXLAN/Geneve tunnel* — that is, which device
+acts as the VTEP.
+
+**Model 1 — Switch-fabric VXLAN**
+    The default (``create_localnet_ports = True``). The physical switches
+    are the VTEPs. The L2VNI driver allocates a dynamic VLAN per overlay
+    network on the baremetal-facing leaf; a localnet port is used together
+    with the switch management plugin (e.g. networking-generic-switch) to
+    bind through to the physical switch port, and the plugin programs a
+    ``VLAN ↔ VNI`` mapping on that leaf using the ``vni`` from the port
+    binding profile. The switch encapsulates the traffic, and the VXLAN
+    tunnel is carried *across the fabric, between switches*, to the far VTEP
+    — typically the leaf where the OVN network nodes (gateway chassis)
+    attach. Each leaf maps its own local VLAN to the *same* VNI, and the
+    fabric underlay stitches the two ends together. This intermediary,
+    switch-to-switch VXLAN segment is the data path shown in
+    `Switch-fabric VXLAN data path`_ below.
+
+**Model 2 — OVN-native VXLAN between peers**
+    Set ``create_localnet_ports = False``. OVN terminates the tunnels itself
+    and moves traffic directly between its VXLAN peers, without the physical
+    switches bridging ``VLAN ↔ VNI`` or carrying VXLAN. There is no localnet
+    interface and no physical-port hand-off in this model — OVN simply
+    handles it between peers.
+
+.. important::
+   **Current support status (as of the 2026.2 release):** Model 1 is the
+   model in use. Neutron has landed *pure-IP* (routed / L3) VXLAN, but not
+   the *MAC* (L2 bridging) VXLAN that Model 2 needs for OVN to bridge
+   baremetal L2 endpoints directly between VXLAN peers. Until that support
+   lands, OVN hands off to its local leaf and the switches themselves
+   perform the ``VLAN ↔ VNI`` bridging and carry the VXLAN between one
+   another.
+
+   Plan for the switch-fabric data path (Model 1) shown below. Model 2 is
+   described here so the intended end state is clear, but it is not yet a
+   complete option for L2 baremetal attachment.
+
+Switch-fabric VXLAN data path
+-----------------------------
+
+In Model 1 the VNI travels between two switches. The driver allocates one
+VLAN per overlay network per physical network and reuses it for every port
+on that network, so the *same* VLAN ID appears on both ends: the
+baremetal-facing leaf maps that VLAN to the VNI, and the far leaf maps the
+same VNI back to that same VLAN, which the OVN network node (gateway chassis)
+trunks. The VXLAN tunnel between the two leaves is the intermediary segment —
+neither the baremetal server nor OVN ever sees it directly.
+
+.. code-block:: text
+
+    ┌──────────────────┐                            ┌──────────────────┐
+    │    Baremetal     │                            │   OVN network    │
+    │     server       │                            │  node (gateway)  │
+    └─────────┬────────┘                            └─────────┬────────┘
+              │ access VLAN 100                trunk VLAN 100 │
+    ┌─────────▼────────┐                            ┌─────────▼────────┐
+    │ Baremetal-facing │                            │  Network-node    │
+    │  leaf   (VTEP)   │       VXLAN VNI 5000       │  leaf   (VTEP)   │
+    │ VLAN 100 ↔ VNI   │◀──────────────────────────▶│ VNI 5000 ↔ VLAN  │
+    │      5000        │  (fabric underlay/spines)  │      100         │
+    └──────────────────┘                            └──────────────────┘
+
+The ``vni`` value that both leaves must agree on is written into the port
+binding profile by the L2VNI machinery: the mechanism driver supplies it on
+baremetal ports, and the trunk reconciliation agent supplies it on the
+network-node trunk subports. See
+:doc:`/admin/l2vni-trunk-reconciliation` for the network-node side.
+
+Cross-connect VLAN pool
+-----------------------
+
+The dynamic VLAN segments this driver allocates are *internal
+cross-connects*: they stitch the baremetal server and the OVN side to the
+switch, where the ``VLAN ↔ VNI`` mapping happens. They carry no tenant
+meaning of their own and must not be confused with tenant or provider VLANs.
+
+Before enabling the driver, reserve a **dedicated VLAN range** for these
+cross-connects on the physical network used for baremetal service
+interactions. In the examples throughout this document that network is
+``physnet1``:
+
+.. code-block:: ini
+
+   [ml2_type_vlan]
+   # physnet1 is the physical network used for baremetal service
+   # interactions. Reserve a wide, dedicated range for cross-connects.
+   network_vlan_ranges = physnet1:100:1100
+
+Planning notes:
+
+- **Dedicate the range.** It must not overlap VLANs used for tenant provider
+  networks, management, or anything else on ``physnet1``. The driver
+  allocates from it dynamically.
+- **Size it generously.** One VLAN is consumed per overlay network that has
+  baremetal ports on the physical network, so the pool bounds how many such
+  overlay networks can exist at once. A range of roughly a thousand VLANs is
+  a reasonable starting point for most deployments; size as
+  ``overlay_networks × physical_networks`` and see `VLAN Pool Sizing`_ for
+  the full calculation.
+- **One VLAN per overlay network, reused at both ends.** Within a physical
+  network the driver allocates a single VLAN segment per overlay network and
+  reuses it for every port on that network — the baremetal port and the OVN
+  network-node trunk subport share the *same* VLAN ID, both mapped to the
+  same VNI by their respective leaves.
+- **The VLAN is not passed natively across the fabric.** Each cross-connect
+  VLAN is *bound to the VXLAN network* at the leaf; the switch maps it to the
+  VNI, and the VXLAN tunnel carries it to the far leaf. You therefore do not
+  need to trunk these VLANs across the fabric underlay — they only need to be
+  configured on the local leaf ports where the ``VLAN ↔ VNI`` binding occurs
+  (the baremetal-facing leaf and the network-node leaf).
+- **Multiple physical networks.** Networker nodes may serve several distinct
+  physnets. A physnet is a human structural construct — a label used to
+  model a slice of the network — so VLAN ID uniqueness is enforced by the
+  physical switch, not by the physnet. Two physnets that ride the same
+  underlying leaf switch must use non-overlapping VLAN ranges. Conversely,
+  the same VLAN range may be reused across physnets — even mingling onto a
+  common overlay network — as long as those physnets are not serviced by the
+  same physical leaf switches.
+
+.. tip::
+   **Operational recommendations.**
+
+   - Deploy multiple networker nodes for high availability and to spread the
+     cross-connect traffic. See
+     :doc:`/admin/l2vni-trunk-reconciliation` for the agent-side HA model.
+   - Monitor **VLAN pool utilization** (segments allocated versus the size of
+     the configured range) so the range can be grown before it is exhausted.
+   - Monitor **traffic utilization on the physnet interfaces** of the
+     networker nodes passing traffic to the underlying network. Those
+     interfaces aggregate the overlay traffic for their physnet and can
+     become a bottleneck as usage grows.
+
 Architecture
 ============
+
+.. note::
+   The walkthrough below covers the per-port mechanics — dynamic VLAN
+   allocation and the OVN localnet port — used by the switch-fabric model
+   (Model 1). See `Deployment Models`_ above for how the VNI then traverses
+   the fabric between switches.
 
 How it Works
 ------------
@@ -56,6 +223,7 @@ The L2VNI mechanism driver operates as follows:
     └──────┬────────────────┘
            │
     ┌──────▼───────┐
+    │  Neutron's   │
     │ VXLAN/Geneve │
     │   Overlay    │
     └──────────────┘
@@ -85,8 +253,8 @@ When a baremetal port is created or deleted, the following workflow occurs:
 2. **Switch Management Plugin** (e.g., genericswitch):
 
    - Configures the physical switch to map the VLAN to the server's port
-   - This is the **final step** in port binding
-   - Must be listed **last** in mechanism_drivers
+   - Performs the **final** hierarchical bind of the dynamic VLAN segment
+   - Must be listed **after** ``baremetal-l2vni`` in mechanism_drivers
 
 Mechanism Driver Ordering
 -------------------------
@@ -96,22 +264,27 @@ The order of mechanism drivers in ``ml2_conf.ini`` is critical:
 .. code-block:: ini
 
    [ml2]
-   # CORRECT ORDER - switch management MUST be last
-   mechanism_drivers = ovn,baremetal_l2vni,baremetal,genericswitch
+   # CORRECT ORDER
+   mechanism_drivers = ovn,baremetal-l2vni,genericswitch,baremetal
 
    # INCORRECT - will break port binding
-   mechanism_drivers = ovn,genericswitch,baremetal_l2vni  # WRONG!
+   mechanism_drivers = ovn,genericswitch,baremetal-l2vni  # WRONG!
 
 **Why order matters:**
 
-- OVN provides the overlay network backend
-- baremetal_l2vni allocates the VLAN and creates localnet ports
-- baremetal handles standard baremetal port binding
-- genericswitch (or other switch management) performs the **final** switch
-  configuration step
+- ``ovn`` provides the overlay network backend and must be first
+- ``baremetal-l2vni`` must come **after** ``ovn`` so an overlay segment
+  exists to bind against; it allocates the dynamic VLAN and creates the
+  localnet port
+- ``baremetal-l2vni`` must come **before** both ``baremetal`` and the switch
+  management plugin, since they act on the VLAN segment it allocates
+- the switch management plugin (e.g. ``genericswitch``) performs the final
+  hierarchical bind of that VLAN segment; on overlay networks the
+  ``baremetal`` driver defers, so it may follow the switch driver
 
-If the switch management plugin runs too early, it won't have the correct VLAN
-information allocated by baremetal_l2vni, causing port binding to fail.
+If the switch management plugin runs before ``baremetal-l2vni``, it won't have
+the VLAN segment this driver allocates, and port binding will fail. This
+ordering matches the one documented for Ironic; see `See Also`_.
 
 Requirements
 ============
@@ -128,22 +301,24 @@ Configuration
 Enabling the Driver
 -------------------
 
-Edit ``/etc/neutron/plugins/ml2/ml2_conf.ini`` and add ``baremetal_l2vni`` to
+Edit ``/etc/neutron/plugins/ml2/ml2_conf.ini`` and add ``baremetal-l2vni`` to
 the list of mechanism drivers:
 
 .. code-block:: ini
 
    [ml2]
-   mechanism_drivers = ovn,baremetal_l2vni,baremetal,genericswitch
+   mechanism_drivers = ovn,baremetal-l2vni,genericswitch,baremetal
 
 .. important::
    **Driver order is critical:**
 
    - ``ovn`` must be first (provides overlay network backend)
-   - ``baremetal_l2vni`` allocates VLANs and creates localnet ports
-   - ``baremetal`` handles standard baremetal port binding
-   - ``genericswitch`` (or other switch management) must be **last** to
-     perform final switch configuration
+   - ``baremetal-l2vni`` allocates VLANs and creates localnet ports, and must
+     come after ``ovn`` but before ``baremetal`` and the switch driver
+   - ``genericswitch`` (or other switch management) performs the final
+     hierarchical bind of the VLAN segment
+   - ``baremetal`` handles standard baremetal port binding; on overlay
+     networks it defers to the switch driver
 
 Configuration Options
 ---------------------
@@ -192,6 +367,11 @@ Configuration Parameters
        If you're using EVPN where network attachment is handled via tunnels,
        you likely want to set this to ``False`` since localnet ports are not
        needed for that architecture.
+
+    .. note::
+       See `Deployment Models`_ for how this option maps to the
+       switch-fabric (``True``) and OVN-native (``False``) data paths, and
+       for the current support status of each.
 
 ``default_physical_network``
     **Type**: String
@@ -251,7 +431,7 @@ Ensure your physical networks are properly configured in ML2:
 .. code-block:: ini
 
    [ml2_type_vlan]
-   network_vlan_ranges = physnet1:100:200
+   network_vlan_ranges = physnet1:100:1100
 
 On each chassis (compute/network node), configure OVN bridge mappings:
 
@@ -278,7 +458,7 @@ Edit ``/etc/neutron/plugins/ml2/ml2_conf.ini``:
 .. code-block:: ini
 
    [ml2]
-   mechanism_drivers = ovn,baremetal_l2vni,baremetal,genericswitch
+   mechanism_drivers = ovn,baremetal-l2vni,genericswitch,baremetal
    type_drivers = flat,vlan,vxlan,geneve
    project_network_types = vxlan
 
@@ -287,8 +467,9 @@ Edit ``/etc/neutron/plugins/ml2/ml2_conf.ini``:
    default_physical_network = physnet1
 
 .. important::
-   Ensure mechanism drivers are in the correct order: OVN, baremetal_l2vni,
-   baremetal, genericswitch (or other switch management plugin last).
+   Ensure mechanism drivers are in the correct order: ``ovn``,
+   ``baremetal-l2vni``, then the switch management plugin (e.g.
+   ``genericswitch``) and ``baremetal``.
 
 Step 2: Configure Physical Networks
 ------------------------------------
@@ -298,7 +479,7 @@ Ensure VLAN ranges are configured:
 .. code-block:: ini
 
    [ml2_type_vlan]
-   network_vlan_ranges = physnet1:100:200
+   network_vlan_ranges = physnet1:100:1100
 
 Step 3: Configure OVN Bridge Mappings
 -------------------------------------
@@ -334,10 +515,10 @@ as VXLAN or Geneve (the only supported types for this driver):
      overlay-subnet
 
 .. warning::
-   **Do not use provider networks** (``--provider-physical-network``,
+   **Do not use provider networks** (e.g. ``--provider-physical-network``)
    with this driver. Provider networks are intended to be pre-configured
-   for direct attachment, where as this model and interaciton requires
-   additional confiuration and actions to occur.
+   for direct attachment, whereas this model and interaction require
+   additional configuration and actions to occur.
 
 .. note::
    Only VXLAN and Geneve network types are supported. If your default network
@@ -548,5 +729,10 @@ See Also
 
 * :doc:`/configuration/ml2/index` - ML2 Plugin Configuration
 * :doc:`/contributor/index` - Contributing Guide
+* Ironic VXLAN administration guide (connectivity models and mechanism
+  driver ordering):
+  https://docs.openstack.org/ironic/latest/admin/vxlan.html
+* Ironic deploy / user guide (tenant self-service workflow):
+  https://docs.openstack.org/ironic/latest/user/deploy.html
 * OpenStack Neutron Documentation: https://docs.openstack.org/neutron/
 * OVN Documentation: https://www.ovn.org/

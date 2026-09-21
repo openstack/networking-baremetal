@@ -7,13 +7,13 @@ features:
     physical networks and creates OVN localnet ports to bridge overlay traffic
     to baremetal nodes.
 
-    To enable the driver, add ``baremetal_l2vni`` to the mechanism_drivers
+    To enable the driver, add ``baremetal-l2vni`` to the mechanism_drivers
     list in ``ml2_conf.ini``:
 
     .. code-block:: ini
 
        [ml2]
-       mechanism_drivers = ovn,baremetal_l2vni
+       mechanism_drivers = ovn,baremetal-l2vni
 
        [baremetal_l2vni]
        create_localnet_ports = True
