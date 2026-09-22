@@ -617,3 +617,47 @@ class TestL2VNIEventRegistration(_L2VNIAgentTestBase):
         mock_ovn_client.get_ovn_nb_idl.return_value = None
         self._agent(True, True)
         mock_ovn_client.get_ovn_nb_event_idl.assert_not_called()
+
+
+@mock.patch.object(ironic_neutron_agent.BaremetalNeutronAgent,
+                   '_get_neutron_client', autospec=True)
+@mock.patch.object(ironic_neutron_agent, 'ovn_client', autospec=True)
+@mock.patch.object(ironic_client, '_get_ironic_session', autospec=True)
+@mock.patch.object(connection.Connection, 'baremetal', autospec=True)
+class TestL2VNIEnablement(_L2VNIAgentTestBase):
+    """enable_l2vni_trunk_reconciliation is the master switch for L2VNI."""
+
+    def test_both_disabled(self, mock_conn, mock_ir_client, mock_ovn_client,
+                           mock_neutron):
+        agent = self._agent(False, False)
+        self.assertIsNone(agent.trunk_manager)
+        mock_ovn_client.get_ovn_nb_idl.assert_not_called()
+        mock_ovn_client.get_ovn_nb_event_idl.assert_not_called()
+
+    def test_events_only_does_not_enable_l2vni(self, mock_conn,
+                                               mock_ir_client,
+                                               mock_ovn_client, mock_neutron):
+        # Regression: the events option also defaults to True, so this
+        # combination used to build the trunk manager, connect to OVN and
+        # reconcile on every localnet port change even though L2VNI trunk
+        # reconciliation was disabled.
+        agent = self._agent(False, True)
+        self.assertIsNone(agent.trunk_manager)
+        mock_ovn_client.get_ovn_nb_idl.assert_not_called()
+        mock_ovn_client.get_ovn_sb_idl.assert_not_called()
+        mock_ovn_client.get_ovn_nb_event_idl.assert_not_called()
+
+    def test_reconciliation_without_events(self, mock_conn, mock_ir_client,
+                                           mock_ovn_client, mock_neutron):
+        agent = self._agent(True, False)
+        self.assertIsNotNone(agent.trunk_manager)
+        mock_ovn_client.get_ovn_nb_idl.assert_called_once_with()
+        # No event handler when only periodic reconciliation is enabled.
+        mock_ovn_client.get_ovn_nb_event_idl.assert_not_called()
+
+    def test_both_enabled(self, mock_conn, mock_ir_client, mock_ovn_client,
+                          mock_neutron):
+        agent = self._agent(True, True)
+        self.assertIsNotNone(agent.trunk_manager)
+        mock_ovn_client.get_ovn_nb_idl.assert_called_once_with()
+        mock_ovn_client.get_ovn_nb_event_idl.assert_called_once_with()

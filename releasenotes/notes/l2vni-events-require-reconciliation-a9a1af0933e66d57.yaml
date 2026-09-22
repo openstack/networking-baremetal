@@ -1,0 +1,18 @@
+---
+fixes:
+  - |
+    Setting ``[l2vni] enable_l2vni_trunk_reconciliation = false`` now fully
+    disables L2VNI trunk reconciliation in the ironic-neutron-agent.
+    Previously it only stopped the periodic reconciliation loop, because
+    ``[l2vni] enable_l2vni_trunk_reconciliation_events`` was treated as an
+    independent switch and also defaults to ``true``. The agent therefore
+    still built the L2VNI trunk manager, connected to OVN, registered the
+    localnet port event handler, and ran a full reconcile, including
+    creating the anchor networks, on every OVN localnet port change.
+    Deployments that do not use the L2VNI feature saw repeated errors from
+    anchor network creation, for example when
+    ``[l2vni] l2vni_subport_anchor_network_type`` is not one of the
+    configured ML2 ``type_drivers``. ``enable_l2vni_trunk_reconciliation``
+    is now the single master switch for the feature, matching the
+    documented behaviour of the events option, and enabling only the events
+    option logs a warning and is ignored.
