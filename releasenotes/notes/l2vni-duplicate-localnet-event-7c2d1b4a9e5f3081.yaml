@@ -1,0 +1,10 @@
+---
+fixes:
+  - |
+    The ironic-neutron-agent no longer registers the OVN
+    ``LocalnetPortEvent`` handler twice when event-driven L2VNI trunk
+    reconciliation is enabled. The handler was registered both inline
+    during agent initialization and by ``_register_ovn_event_handlers()``.
+    Both used the same cached event-only OVN Northbound connection, so
+    every localnet port create or delete triggered two L2VNI trunk
+    reconciliations.
