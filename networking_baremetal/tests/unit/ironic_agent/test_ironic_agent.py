@@ -23,6 +23,7 @@ from openstack import exceptions as sdk_exc
 from oslo_config import fixture as config_fixture
 from tooz import hashring
 
+from networking_baremetal.agent import agent_config
 from networking_baremetal.agent import ironic_neutron_agent
 from networking_baremetal import constants
 from networking_baremetal import ironic_client
@@ -51,7 +52,6 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
         self.conf = self.useFixture(config_fixture.Config())
         self.conf.config(transport_url='rabbit://user:password@host/')
         # Register agent config options (L2VNI and baremetal_agent)
-        from networking_baremetal.agent import agent_config
         agent_config.register_agent_opts(self.conf.conf)
         # Disable L2VNI, HA alignment, and router HA binding for these tests
         self.conf.config(group='l2vni',
@@ -553,3 +553,55 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
             # Verify empty list is passed when config is not set
             mock_conn.ports.assert_called_once_with(
                 details=True, conductor_groups=[])
+
+
+class _L2VNIAgentTestBase(base.BaseTestCase):
+    """Builds an agent with the L2VNI options under test."""
+
+    def setUp(self):
+        super(_L2VNIAgentTestBase, self).setUp()
+        self.conf = self.useFixture(config_fixture.Config())
+        self.conf.config(transport_url='rabbit://user:password@host/')
+        agent_config.register_agent_opts(self.conf.conf)
+        self.conf.config(group='baremetal_agent',
+                         enable_ha_chassis_group_alignment=False,
+                         enable_router_ha_binding=False)
+
+    def _agent(self, reconciliation, events):
+        self.conf.config(
+            group='l2vni',
+            enable_l2vni_trunk_reconciliation=reconciliation,
+            enable_l2vni_trunk_reconciliation_events=events)
+        return ironic_neutron_agent.BaremetalNeutronAgent()
+
+
+@mock.patch.object(ironic_neutron_agent.BaremetalNeutronAgent,
+                   '_get_neutron_client', autospec=True)
+@mock.patch.object(ironic_neutron_agent, 'ovn_client', autospec=True)
+@mock.patch.object(ironic_client, '_get_ironic_session', autospec=True)
+@mock.patch.object(connection.Connection, 'baremetal', autospec=True)
+class TestL2VNIEventRegistration(_L2VNIAgentTestBase):
+    """The OVN localnet port event handler is registered exactly once."""
+
+    def test_localnet_event_registered_once(self, mock_conn, mock_ir_client,
+                                            mock_ovn_client, mock_neutron):
+        # Regression: the handler was registered both inline in __init__ and
+        # by _register_ovn_event_handlers(). Both used the same cached
+        # event-only OVN NB connection, so each localnet port change
+        # triggered two reconciles.
+        self._agent(True, True)
+        watch_event = (mock_ovn_client.get_ovn_nb_event_idl
+                       .return_value.idl.notify_handler.watch_event)
+        registered = [type(call.args[0]).__name__
+                      for call in watch_event.call_args_list]
+        self.assertEqual(['LocalnetPortEvent'], registered)
+
+    def test_events_enabled_without_ovn_connection(self, mock_conn,
+                                                   mock_ir_client,
+                                                   mock_ovn_client,
+                                                   mock_neutron):
+        # The "OVN connection not available" guard the inline block carried
+        # now lives in _register_ovn_event_handlers().
+        mock_ovn_client.get_ovn_nb_idl.return_value = None
+        self._agent(True, True)
+        mock_ovn_client.get_ovn_nb_event_idl.assert_not_called()
