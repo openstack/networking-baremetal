@@ -170,19 +170,37 @@ class BaremetalNeutronAgent(service.ServiceBase):
         self.ironic_client = ironic_client.get_client()
         self.reported_nodes = {}
 
+        # Event-driven L2VNI reconciliation refines the L2VNI trunk
+        # reconciliation feature, it is not a feature of its own. Both options
+        # default to True, so treating them as independent switches meant
+        # enable_l2vni_trunk_reconciliation=False still built the trunk
+        # manager and reconciled on every OVN localnet port change. Honour
+        # enable_l2vni_trunk_reconciliation as the single master switch, as
+        # the help text for the events option already documents.
+        self._l2vni_enabled = CONF.l2vni.enable_l2vni_trunk_reconciliation
+        self._l2vni_events_enabled = (
+            self._l2vni_enabled
+            and CONF.l2vni.enable_l2vni_trunk_reconciliation_events)
+        if (CONF.l2vni.enable_l2vni_trunk_reconciliation_events
+                and not self._l2vni_enabled):
+            LOG.warning('Ignoring [l2vni] '
+                        'enable_l2vni_trunk_reconciliation_events because '
+                        '[l2vni] enable_l2vni_trunk_reconciliation is '
+                        'disabled. Event-driven reconciliation requires '
+                        'L2VNI trunk reconciliation to be enabled.')
+
         # Initialize OVN connections and Neutron client if any OVN-based
         # features are enabled (L2VNI, router HA binding, or HA alignment)
         ovn_nb_idl = None
         ovn_sb_idl = None
         neutron = None
 
-        if (CONF.l2vni.enable_l2vni_trunk_reconciliation
-                or CONF.l2vni.enable_l2vni_trunk_reconciliation_events
+        if (self._l2vni_enabled
                 or CONF.baremetal_agent.enable_ha_chassis_group_alignment
                 or CONF.baremetal_agent.enable_router_ha_binding):
-            if CONF.l2vni.enable_l2vni_trunk_reconciliation:
+            if self._l2vni_enabled:
                 LOG.info('L2VNI trunk reconciliation enabled, initializing...')
-            if CONF.l2vni.enable_l2vni_trunk_reconciliation_events:
+            if self._l2vni_events_enabled:
                 LOG.info('Event-driven L2VNI trunk reconciliation enabled')
             neutron = self._get_neutron_client()
 
@@ -204,13 +222,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
         self.l2vni_reconcile = None
         self._l2vni_reconciliation_lock = threading.Lock()
 
-        if (CONF.l2vni.enable_l2vni_trunk_reconciliation
-                or CONF.l2vni.enable_l2vni_trunk_reconciliation_events):
-            if CONF.l2vni.enable_l2vni_trunk_reconciliation:
-                LOG.info('L2VNI trunk reconciliation enabled, initializing...')
-            if CONF.l2vni.enable_l2vni_trunk_reconciliation_events:
-                LOG.info('Event-driven L2VNI trunk reconciliation enabled')
-
+        if self._l2vni_enabled:
             self.trunk_manager = (
                 l2vni_trunk_manager.L2VNITrunkManager(
                     neutron_client=neutron,
@@ -257,8 +269,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
         """
         # Check if any event-driven features are enabled
         needs_l2vni_events = bool(
-            CONF.l2vni.enable_l2vni_trunk_reconciliation_events
-            and self.trunk_manager)
+            self._l2vni_events_enabled and self.trunk_manager)
         if needs_l2vni_events and not self.trunk_manager.ovn_nb_idl:
             LOG.error('OVN connection not available, event-driven L2VNI '
                       'trunk reconciliation disabled. Using periodic '
@@ -323,7 +334,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
 
         # Start L2VNI trunk reconciliation loop if periodic reconciliation
         # is enabled (event-driven reconciliation works without the loop)
-        if self.trunk_manager and CONF.l2vni.enable_l2vni_trunk_reconciliation:
+        if self.trunk_manager and self._l2vni_enabled:
             # Add random jitter to prevent thundering herd on restart
             # First run happens after jitter only, subsequent runs at interval
             jitter = secrets.randbelow(
