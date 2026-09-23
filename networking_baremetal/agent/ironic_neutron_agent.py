@@ -15,7 +15,6 @@
 
 import os
 import secrets
-import socket
 import sys
 import threading
 from urllib import parse as urlparse
@@ -144,7 +143,7 @@ class BaremetalNeutronAgent(service.ServiceBase):
         self.context = context.get_admin_context_without_session()
         self.agent_id = uuidutils.generate_uuid(dashed=True)
         LOG.info('Agent ID generated: %s', self.agent_id)
-        self.agent_host = socket.gethostname()
+        self.agent_host = CONF.host
         self.heartbeat = None
         self.notify_agents = None
 

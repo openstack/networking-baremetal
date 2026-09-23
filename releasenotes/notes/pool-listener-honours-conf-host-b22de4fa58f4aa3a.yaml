@@ -1,0 +1,12 @@
+---
+fixes:
+  - |
+    The ironic-neutron-agent notification listener pool queue is now named
+    after ``[DEFAULT] host`` rather than always the hostname reported by the
+    operating system. ``host`` still defaults to that hostname, so there is
+    no change unless it is set. Quorum queues cannot be declared
+    ``auto_delete``, so the pool queue is only reused across restarts when
+    its name is stable; deployments where the hostname is not stable, such
+    as a Kubernetes Deployment where it is the pod name, left a stale queue
+    behind on every rollout. Those deployments can now set ``host`` to a
+    durable value.
