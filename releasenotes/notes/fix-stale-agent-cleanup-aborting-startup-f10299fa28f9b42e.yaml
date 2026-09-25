@@ -1,0 +1,8 @@
+---
+fixes:
+  - |
+    Fixed the ironic-neutron-agent silently stopping processing notifications
+    when ironic-api was unavailable during agent startup. Stale agent cleanup
+    is now best-effort and no longer aborts startup, and a node lookup that
+    fails with anything other than a not-found error no longer marks a live
+    agent for removal.

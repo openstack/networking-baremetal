@@ -343,7 +343,14 @@ class BaremetalNeutronAgent(service.ServiceBase):
             self._report_state)
         self.heartbeat.start(interval=CONF.AGENT.report_interval,
                              initial_delay=CONF.AGENT.report_interval)
-        self.cleanup_stale_agents()
+        # Best-effort housekeeping: the notification listeners are already
+        # consuming, so raising here would leave them registered with no
+        # dispatcher and skip the reconciliation loops below.
+        try:
+            self.cleanup_stale_agents()
+        except Exception:
+            LOG.exception('Failed to clean up stale baremetal agents, '
+                          'continuing agent startup.')
 
         # Start L2VNI trunk reconciliation loop if periodic reconciliation
         # is enabled (event-driven reconciliation works without the loop)
@@ -570,6 +577,9 @@ class BaremetalNeutronAgent(service.ServiceBase):
         the Ironic client's 'get_node' method. If the node is not found the
         node is appended to the 'nodes_not_found' list.
 
+        Errors other than NotFoundException say nothing about whether the
+        node exists, so the agent is skipped and left for a later pass.
+
         :param down_bm_agents: (list) Agents that are down in Neutron.
         :return: (list) Nodes that are not found in Ironic.
         """
@@ -580,6 +590,10 @@ class BaremetalNeutronAgent(service.ServiceBase):
                 self.ironic_client.get_node(node)
             except sdk_exc.NotFoundException:
                 nodes_not_found.append(node)
+            except sdk_exc.SDKException as e:
+                LOG.warning('Could not determine if node %(node)s still '
+                            'exists in ironic, skipping stale agent cleanup '
+                            'for it: %(err)s', {'node': node, 'err': e})
 
         return nodes_not_found
 
