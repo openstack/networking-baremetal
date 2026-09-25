@@ -18,6 +18,7 @@ from unittest import mock
 
 from neutron.tests import base as tests_base
 from neutron_lib import constants as n_const
+from openstack import exceptions as sdk_exc
 from oslo_config import cfg
 from oslo_utils import timeutils
 from tooz import hashring
@@ -561,3 +562,102 @@ class TestBaremetalAgentConfig(tests_base.BaseTestCase):
                         if isinstance(opt, cfg.BoolOpt)]
         for opt in boolean_opts:
             self.assertIsNotNone(opt.default)
+
+
+class TestStaleAgentCleanup(tests_base.BaseTestCase):
+    """Tests for stale baremetal agent cleanup during agent startup."""
+
+    def setUp(self):
+        super(TestStaleAgentCleanup, self).setUp()
+        agent_config.register_agent_opts(CONF)
+
+    @staticmethod
+    def _fake_agent():
+        agent = mock.Mock(spec=ironic_neutron_agent.BaremetalNeutronAgent)
+        agent.ironic_client = mock.Mock()
+        return agent
+
+    @staticmethod
+    def _get_nodes_not_found(agent, down_bm_agents):
+        return (ironic_neutron_agent.BaremetalNeutronAgent
+                ._get_nodes_not_found(agent, down_bm_agents))
+
+    def test_get_nodes_not_found_collects_missing_nodes(self):
+        """Nodes ironic reports as absent are returned for cleanup."""
+        agent = self._fake_agent()
+        agent.ironic_client.get_node.side_effect = sdk_exc.NotFoundException()
+
+        self.assertEqual(
+            ['node-1', 'node-2'],
+            self._get_nodes_not_found(
+                agent, [{'host': 'node-1'}, {'host': 'node-2'}]))
+
+    def test_get_nodes_not_found_ignores_existing_nodes(self):
+        """Nodes that still exist in ironic are not returned."""
+        agent = self._fake_agent()
+        agent.ironic_client.get_node.return_value = mock.Mock()
+
+        self.assertEqual(
+            [], self._get_nodes_not_found(agent, [{'host': 'node-1'}]))
+
+    def test_get_nodes_not_found_skips_node_on_transient_error(self):
+        """A 503 from ironic must not be read as 'the node is gone'."""
+        agent = self._fake_agent()
+        agent.ironic_client.get_node.side_effect = sdk_exc.HttpException(
+            message='Service Unavailable', http_status=503)
+
+        self.assertEqual(
+            [], self._get_nodes_not_found(agent, [{'host': 'node-1'}]))
+
+    def test_get_nodes_not_found_transient_error_does_not_stop_iteration(self):
+        """One unreachable node does not hide later missing nodes."""
+        agent = self._fake_agent()
+        agent.ironic_client.get_node.side_effect = [
+            sdk_exc.HttpException(message='Service Unavailable',
+                                  http_status=503),
+            sdk_exc.NotFoundException(),
+        ]
+
+        self.assertEqual(
+            ['node-2'],
+            self._get_nodes_not_found(
+                agent, [{'host': 'node-1'}, {'host': 'node-2'}]))
+
+    @mock.patch.object(ironic_neutron_agent, 'loopingcall', autospec=True)
+    def test_start_continues_when_stale_agent_cleanup_fails(self, mock_lc):
+        """A failing cleanup must not abort the rest of start()."""
+        CONF.set_override('enable_ha_chassis_group_alignment', False,
+                          group='baremetal_agent')
+        agent = mock.Mock(spec=ironic_neutron_agent.BaremetalNeutronAgent)
+        agent.pool_listener = mock.Mock()
+        agent.listener = mock.Mock()
+        agent.trunk_manager = None
+        agent.router_ha_binding = mock.Mock()
+        agent.cleanup_stale_agents.side_effect = sdk_exc.HttpException(
+            message='Service Unavailable', http_status=503)
+
+        ironic_neutron_agent.BaremetalNeutronAgent.start(agent)
+
+        agent.cleanup_stale_agents.assert_called_once_with()
+        # The router HA binding loop is started after the cleanup call, so
+        # seeing it scheduled proves start() ran to completion.
+        scheduled = [call.args[0] for call
+                     in mock_lc.FixedIntervalLoopingCall.call_args_list]
+        self.assertIn(agent._reconcile_router_ha_binding, scheduled)
+
+    @mock.patch.object(ironic_neutron_agent, 'loopingcall', autospec=True)
+    def test_start_starts_listeners_and_cleans_up(self, mock_lc):
+        """The happy path still consumes and performs the cleanup."""
+        CONF.set_override('enable_ha_chassis_group_alignment', False,
+                          group='baremetal_agent')
+        agent = mock.Mock(spec=ironic_neutron_agent.BaremetalNeutronAgent)
+        agent.pool_listener = mock.Mock()
+        agent.listener = mock.Mock()
+        agent.trunk_manager = None
+        agent.router_ha_binding = None
+
+        ironic_neutron_agent.BaremetalNeutronAgent.start(agent)
+
+        agent.pool_listener.start.assert_called_once_with()
+        agent.listener.start.assert_called_once_with()
+        agent.cleanup_stale_agents.assert_called_once_with()
