@@ -13,6 +13,8 @@
 from oslo_config import cfg
 from oslo_log import log as logging
 
+from networking_baremetal import exceptions
+
 
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
@@ -106,3 +108,32 @@ def get_devices():
             devices[CONF[dev].switch_info] = dev
 
     return devices
+
+
+def validate_device_options(device):
+    """Check every configured option for a device.
+
+    oslo.config converts and validates an option value when it is first
+    read, not when the configuration is parsed. Without this, a malformed
+    value goes unnoticed until the driver happens to use that option, which
+    for most device options is while binding a port -- long after the
+    service started. Reading every registered option here moves that to
+    startup, and reports all of a device's problems at once instead of
+    stopping at the first.
+
+    Must be called after the driver's load_config(), so that driver
+    specific options are registered.
+
+    :param device: name of the device configuration group.
+    :raises DriverValidationError: if any option has an invalid value.
+    """
+    errors = []
+    for name in sorted(CONF[device]):
+        try:
+            CONF[device][name]
+        except cfg.Error as e:
+            errors.append(str(e))
+
+    if errors:
+        raise exceptions.DriverValidationError(device=device,
+                                               err='; '.join(errors))
