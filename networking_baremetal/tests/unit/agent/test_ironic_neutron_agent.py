@@ -646,6 +646,27 @@ class TestStaleAgentCleanup(tests_base.BaseTestCase):
         self.assertIn(agent._reconcile_router_ha_binding, scheduled)
 
     @mock.patch.object(ironic_neutron_agent, 'loopingcall', autospec=True)
+    def test_start_keeps_reporting_state_after_a_failed_pass(self, mock_lc):
+        """A pass of _report_state that raises must not end the loop."""
+        CONF.set_override('enable_ha_chassis_group_alignment', False,
+                          group='baremetal_agent')
+        agent = mock.Mock(spec=ironic_neutron_agent.BaremetalNeutronAgent)
+        agent.pool_listener = mock.Mock()
+        agent.listener = mock.Mock()
+        agent.trunk_manager = None
+        agent.router_ha_binding = None
+        loops = {}
+        mock_lc.FixedIntervalLoopingCall.side_effect = (
+            lambda f: loops.setdefault(f, mock.Mock()))
+
+        ironic_neutron_agent.BaremetalNeutronAgent.start(agent)
+
+        loops[agent._report_state].start.assert_called_once_with(
+            interval=CONF.AGENT.report_interval,
+            initial_delay=CONF.AGENT.report_interval,
+            stop_on_exception=False)
+
+    @mock.patch.object(ironic_neutron_agent, 'loopingcall', autospec=True)
     def test_start_starts_listeners_and_cleans_up(self, mock_lc):
         """The happy path still consumes and performs the cleanup."""
         CONF.set_override('enable_ha_chassis_group_alignment', False,

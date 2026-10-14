@@ -1,0 +1,10 @@
+---
+fixes:
+  - |
+    Fixed the ironic-neutron-agent stopping its state reports for good after
+    one failed reporting pass, while its process kept running, so that its
+    Baremetal Node agents went down until a restart. A connection or name
+    resolution failure while listing ironic ports, or a failed
+    ``delete_agent`` call, ended the reports. A failed pass is now logged,
+    and the next pass runs. See `bug 2170772
+    <https://bugs.launchpad.net/networking-baremetal/+bug/2170772>`_.
