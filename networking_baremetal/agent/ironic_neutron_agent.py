@@ -19,6 +19,7 @@ import sys
 import threading
 from urllib import parse as urlparse
 
+from keystoneauth1 import exceptions as ksa_exc
 from neutron.agent import rpc as agent_rpc
 from neutron.common import config as common_config
 from neutron.common.ovn import utils as ovn_utils
@@ -328,8 +329,11 @@ class BaremetalNeutronAgent(service.ServiceBase):
         self.notify_agents.start(interval=(CONF.AGENT.report_interval / 3))
         self.heartbeat = loopingcall.FixedIntervalLoopingCall(
             self._report_state)
+        # A pass that fails must not end the state reports for good: the
+        # failure is logged, and the next pass runs.
         self.heartbeat.start(interval=CONF.AGENT.report_interval,
-                             initial_delay=CONF.AGENT.report_interval)
+                             initial_delay=CONF.AGENT.report_interval,
+                             stop_on_exception=False)
         # Best-effort housekeeping: the notification listeners are already
         # consuming, so raising here would leave them registered with no
         # dispatcher and skip the reconciliation loops below.
@@ -492,6 +496,12 @@ class BaremetalNeutronAgent(service.ServiceBase):
                 # Failed to re-launch a new client, aborting.
                 self.stop(failure=True)
             return
+        except ksa_exc.ClientException:
+            # Ironic could not be reached, as when its name does not
+            # resolve. The client recovers on its own, so the next pass
+            # tries again with it.
+            LOG.exception("Failed to reach ironic! Not reporting state.")
+            return
         abort_operation = False
         for state in node_states.values():
             # If the node was not previously reported with current
@@ -606,6 +616,10 @@ class BaremetalNeutronAgent(service.ServiceBase):
             except oslo_messaging.NoSuchMethod:
                 LOG.warning("Neutron server doesn't support "
                             "`delete_agent` endpoint.")
+                break
+            except Exception:
+                # The agents left are deleted on a later pass.
+                LOG.exception('Failed to remove agent for host: %s', node)
                 break
 
         return deleted_agents

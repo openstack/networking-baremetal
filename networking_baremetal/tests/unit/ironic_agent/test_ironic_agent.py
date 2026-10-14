@@ -15,12 +15,14 @@
 from unittest import mock
 from urllib import parse as urlparse
 
+from keystoneauth1 import exceptions as ksa_exc
 from neutron.agent import rpc as agent_rpc
 from neutron.tests import base
 from neutron_lib import constants as n_const
 from openstack import connection
 from openstack import exceptions as sdk_exc
 from oslo_config import fixture as config_fixture
+import oslo_messaging
 from tooz import hashring
 
 from networking_baremetal.agent import agent_config
@@ -323,6 +325,58 @@ class TestBaremetalNeutronAgent(base.BaseTestCase):
                            host='55555555-4444-3333-aaaa-111111111111',
                            agent_type=constants.BAREMETAL_AGENT_TYPE)],
                 any_order=True)
+
+    def test_report_state_deleted_node_delete_fails(self, mock_conn,
+                                                    mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        gone = '55555555-4444-3333-aaaa-111111111111'
+        with (mock.patch.object(self.agent.state_rpc, 'report_state',
+                                autospec=True) as mock_report_state,
+              mock.patch.object(self.agent.state_rpc, 'delete_agent',
+                                autospec=True) as mock_delete_agent,
+              mock.patch.object(ironic_neutron_agent.LOG, 'exception',
+                                autospec=True) as mock_log):
+            self.agent.ironic_client = mock_conn
+            mock_conn.ports.side_effect = lambda **kwargs: iter([FakePort1()])
+            self.agent.agent_id = 'agent_id'
+            self.agent.member_manager.hashring = hashring.HashRing(
+                [self.agent.agent_id])
+            self.agent.reported_nodes = {
+                '55555555-4444-3333-2222-111111111111': {}, gone: {}}
+            mock_delete_agent.side_effect = oslo_messaging.MessagingTimeout()
+
+            # The pass still reports state, and leaves the node for the
+            # next pass.
+            self.agent._report_state()
+            self.assertEqual(1, mock_report_state.call_count)
+            self.assertEqual(1, mock_log.call_count)
+            self.assertIn(gone, self.agent.reported_nodes)
+
+            mock_delete_agent.side_effect = None
+            self.agent._report_state()
+            self.assertNotIn(gone, self.agent.reported_nodes)
+            self.assertEqual(2, mock_delete_agent.call_count)
+
+    @mock.patch.object(ironic_client, 'get_client', autospec=True)
+    @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
+    def test_ironic_port_list_connection_failure(self, mock_log,
+                                                 mock_get_client, mock_conn,
+                                                 mock_ir_client):
+        self.agent = ironic_neutron_agent.BaremetalNeutronAgent()
+        self.agent.ironic_client = mock_conn
+
+        def mock_generator(details=None, conductor_groups=None):
+            raise ksa_exc.ConnectFailure("Failed to resolve 'ironic'")
+            yield
+
+        mock_conn.ports.side_effect = mock_generator
+        with mock.patch.object(self.agent.state_rpc, 'report_state',
+                               autospec=True) as mock_report_state:
+            self.agent._report_state()
+        mock_report_state.assert_not_called()
+        self.assertEqual(1, mock_log.call_count)
+        # The client is kept: only the agent's initialization made one.
+        self.assertEqual(1, mock_get_client.call_count)
 
     @mock.patch.object(ironic_client, 'get_client', autospec=True)
     @mock.patch.object(ironic_neutron_agent.LOG, 'exception', autospec=True)
